@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pip install:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(timeout:*)",
+      "WebSearch",
+      "WebFetch(domain:site.financialmodelingprep.com)",
+      "WebFetch(domain:polygon.io)",
+      "WebFetch(domain:eodhistoricaldata.com)",
+      "WebFetch(domain:eodhd.com)",
+      "WebFetch(domain:simfin.com)",
+      "WebFetch(domain:www.alphavantage.co)",
+      "WebFetch(domain:intrinio.com)",
+      "WebFetch(domain:www.tiingo.com)",
+      "WebFetch(domain:stockanalysis.com)",
+      "WebFetch(domain:www.msci.com)",
+      "Bash(find:*)",
+      "Bash(powershell -Command:*)"
+    ]
+  }
+}
