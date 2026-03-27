@@ -217,9 +217,9 @@ def main(portfolio_path):
 
 
     # Download the files from release
-download_file_from_github(russell3000_cross_sectional_data_url, 'data/model/russell3000_cross_sectional_data.csv')
-download_file_from_github(russell3000_daily_prices_url, 'data/model/russell3000_daily_prices.csv')
-download_file_from_github(russell3000_factor_exposures_historical_url, 'data/model/russell3000_factor_exposures_historical.csv')
+    download_file_from_github(russell3000_cross_sectional_data_url, 'data/model/russell3000_cross_sectional_data.csv')
+    download_file_from_github(russell3000_daily_prices_url, 'data/model/russell3000_daily_prices.csv')
+    download_file_from_github(russell3000_factor_exposures_historical_url, 'data/model/russell3000_factor_exposures_historical.csv')
 
     # Load portfolio
     print(f"\nLoading portfolio: {portfolio_path}")
