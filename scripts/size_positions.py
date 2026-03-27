@@ -16,8 +16,23 @@ import pandas as pd
 import numpy as np
 import sys
 import warnings
+import requests
 warnings.filterwarnings('ignore')
 
+def download_file_from_github(url, local_filename):
+    """Download a file from GitHub release and save it locally."""
+    response = requests.get(url, stream=True)
+    response.raise_for_status()  # Check if the request was successful
+    with open(local_filename, 'wb') as file:
+        for chunk in response.iter_content(chunk_size=8192):
+            file.write(chunk)
+    print(f"Downloaded {local_filename} from {url}")
+
+# URLs of the files in the GitHub release
+release_base_url = "https://github.com/marcilol/Claude-Code-Projekt/releases/download/v1/"
+russell3000_cross_sectional_data_url = release_base_url + "russell3000_cross_sectional_data.csv"
+russell3000_daily_prices_url = release_base_url + "russell3000_daily_prices.csv"
+russell3000_factor_exposures_historical_url = release_base_url + "russell3000_factor_exposures_historical.csv"
 
 def load_portfolio(filepath):
     """Load portfolio from CSV file"""
@@ -340,6 +355,11 @@ def main(portfolio_path, decision_date='2025-07-01', end_date='2025-12-31',
     print("=" * 70)
     print("ALPHA SIZING - Chapter 6 Implementation")
     print("=" * 70)
+
+    # Download the files from release
+    download_file_from_github(russell3000_cross_sectional_data_url, 'data/model/russell3000_cross_sectional_data.csv')
+    download_file_from_github(russell3000_daily_prices_url, 'data/model/russell3000_daily_prices.csv')
+    download_file_from_github(russell3000_factor_exposures_historical_url, 'data/model/russell3000_factor_exposures_historical.csv')
 
     # Load portfolio
     print(f"\nLoading portfolio: {portfolio_path}")
