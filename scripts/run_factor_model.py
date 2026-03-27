@@ -54,57 +54,54 @@ class CrossSection:
         # WLS weights: sqrt of market cap, normalized
         self.W = np.sqrt(self.capital) / np.sqrt(self.capital).sum()
 
-    def reg(self):
-        """
-        Solve multi-factor model with industry neutrality constraint
-        Returns: factor_returns, specific_returns, pure_factor_exposures, R2
-        """
-        W = np.diag(self.W)
+from sklearn.linear_model import Ridge
+from sklearn.decomposition import PCA
 
-        if self.P > 0:
-            # Industry market caps for neutrality constraint
-            industry_capital = np.array([
-                np.sum(self.industry_factors[:, i] * self.capital)
-                for i in range(self.P)
-            ])
+def reg(self):
+    """
+    Solve multi-factor model with industry neutrality constraint
+    Returns: factor_returns, specific_returns, pure_factor_exposures, R2
+    """
+    W = np.diag(self.W)
+    
+    if self.P > 0:
+        industry_capital = np.array([
+            np.sum(self.industry_factors[:, i] * self.capital)
+            for i in range(self.P)
+        ])
+        
+        # Apply PCA for orthogonalization of factors
+        pca = PCA(n_components=min(self.country_factors.shape[1] + self.industry_factors.shape[1] + self.style_factors.shape[1], self.ret.shape[0]))
+        factors = np.hstack([self.country_factors, self.industry_factors, self.style_factors])
+        factors_orthogonalized = pca.fit_transform(factors)
 
-            # Transformation matrix R for industry neutrality
-            # This handles the multicollinearity between country factor and industries
-            R = np.eye(1 + self.P + self.Q)
-            R[self.P, 1:(1 + self.P)] = -industry_capital / industry_capital[-1]
-            R = np.delete(R, self.P, axis=1)
+        # Recalculate pure factor weights using Ridge regression
+        ridge = Ridge(alpha=1e-6)
+        ridge.fit(factors_orthogonalized, self.ret)
+        pure_factor_weight = ridge.coef_
+    else:
+        factors = np.hstack([self.country_factors, self.style_factors])
+        ridge = Ridge(alpha=1e-6)
+        ridge.fit(factors, self.ret)
+        pure_factor_weight = ridge.coef_
 
-            # Construct factor matrix
-            factors = np.hstack([self.country_factors, self.industry_factors, self.style_factors])
-            factors_tran = factors @ R
+    # Factor returns = pure factor portfolio weights × stock returns
+    factor_ret = pure_factor_weight @ self.ret
 
-            # Pure factor portfolio weights
-            try:
-                pure_factor_weight = R @ np.linalg.inv(factors_tran.T @ W @ factors_tran) @ factors_tran.T @ W
-            except np.linalg.LinAlgError:
-                pure_factor_weight = R @ np.linalg.pinv(factors_tran.T @ W @ factors_tran) @ factors_tran.T @ W
-        else:
-            factors = np.hstack([self.country_factors, self.style_factors])
-            try:
-                pure_factor_weight = np.linalg.inv(factors.T @ W @ factors) @ factors.T @ W
-            except np.linalg.LinAlgError:
-                pure_factor_weight = np.linalg.pinv(factors.T @ W @ factors) @ factors.T @ W
+    # Specific (idiosyncratic) returns
+    specific_ret = self.ret - factors @ factor_ret if self.P > 0 else self.ret - factors @ factor_ret
 
-        # Factor returns = pure factor portfolio weights × stock returns
-        factor_ret = pure_factor_weight @ self.ret
+    # Calculate adjusted R²
+    R2 = 1 - np.var(specific_ret) / np.var(self.ret) if np.var(self.ret) > 0 else 0
+    n = len(self.ret)
+    k = factors.shape[1]
+    R2 = 1 - (1 - R2) * (n - 1) / (n - k - 1)
 
-        # Specific (idiosyncratic) returns
-        specific_ret = self.ret - factors @ factor_ret if self.P > 0 else self.ret - factors @ factor_ret
+    # Pure factor exposures
+    pure_factor_exposure = pure_factor_weight @ factors
 
-        # R-squared
-        R2 = 1 - np.var(specific_ret) / np.var(self.ret) if np.var(self.ret) > 0 else 0
-
-        # Pure factor exposures
-        pure_factor_exposure = pure_factor_weight @ factors
-
-        return factor_ret, specific_ret, pure_factor_exposure, R2
-
-
+    return factor_ret, specific_ret, pure_factor_exposure, R2
+    
 def Newey_West(ret, q=2, tao=252):
     """
     Newey-West covariance adjustment for autocorrelation
