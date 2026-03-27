@@ -9,6 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import sys
 import os
+import requests
 
 # Import functions from size_positions
 from size_positions import (
@@ -23,6 +24,21 @@ from size_positions import (
     compute_weights,
     backtest_weights
 )
+
+def download_file_from_github(url, local_filename):
+    """Download a file from GitHub release and save it locally."""
+    response = requests.get(url, stream=True)
+    response.raise_for_status()  # Check if the request was successful
+    with open(local_filename, 'wb') as file:
+        for chunk in response.iter_content(chunk_size=8192):
+            file.write(chunk)
+    print(f"Downloaded {local_filename} from {url}")
+
+# URLs of the files in the GitHub release
+release_base_url = "https://github.com/marcilol/Claude-Code-Projekt/releases/download/v1/"
+russell3000_cross_sectional_data_url = release_base_url + "russell3000_cross_sectional_data.csv"
+russell3000_daily_prices_url = release_base_url + "russell3000_daily_prices.csv"
+russell3000_factor_exposures_historical_url = release_base_url + "russell3000_factor_exposures_historical.csv"
 
 
 def analyze_portfolio(portfolio_path, factor_exp_df, factor_ret_df,
@@ -89,6 +105,11 @@ def main():
     print("=" * 70)
     print("SIZING METHODS COMPARISON ACROSS PORTFOLIOS")
     print("=" * 70)
+
+    # Download the files from release
+    download_file_from_github(russell3000_cross_sectional_data_url, 'data/model/russell3000_cross_sectional_data.csv')
+    download_file_from_github(russell3000_daily_prices_url, 'data/model/russell3000_daily_prices.csv')
+    download_file_from_github(russell3000_factor_exposures_historical_url, 'data/model/russell3000_factor_exposures_historical.csv')
 
     # Portfolios to analyze
     portfolios = {
