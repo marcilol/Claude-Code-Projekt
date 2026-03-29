@@ -1,0 +1,20 @@
+# Large generated model data (regenerate with fetch_data.py + run_factor_model.py)
+data/model/russell3000_factor_exposures_historical.csv
+data/model/russell3000_cross_sectional_data.csv
+data/model/russell3000_daily_prices.csv
+data/model/russell3000_raw_data.pkl
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
