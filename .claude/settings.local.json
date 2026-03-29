@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pip install:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(timeout:*)",
+      "WebSearch",
+      "WebFetch(domain:site.financialmodelingprep.com)",
+      "WebFetch(domain:polygon.io)",
+      "WebFetch(domain:eodhistoricaldata.com)",
+      "WebFetch(domain:eodhd.com)",
+      "WebFetch(domain:simfin.com)",
+      "WebFetch(domain:www.alphavantage.co)",
+      "WebFetch(domain:intrinio.com)",
+      "WebFetch(domain:www.tiingo.com)",
+      "WebFetch(domain:stockanalysis.com)",
+      "WebFetch(domain:www.msci.com)",
+      "Bash(find:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(where python 2>/dev/null || which python 2>/dev/null; where python3 2>/dev/null || which python3 2>/dev/null)",
+      "Bash(cd /c/Users/danie/Documents/portfolio-xray && py scripts/generate_project_plan.py 2)"
+    ]
+  }
+}
