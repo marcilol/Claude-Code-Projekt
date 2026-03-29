@@ -17,9 +17,13 @@
       "WebFetch(domain:stockanalysis.com)",
       "WebFetch(domain:www.msci.com)",
       "Bash(find:*)",
+<<<<<<< HEAD
       "Bash(powershell -Command:*)",
       "Bash(where python 2>/dev/null || which python 2>/dev/null; where python3 2>/dev/null || which python3 2>/dev/null)",
       "Bash(cd /c/Users/danie/Documents/portfolio-xray && py scripts/generate_project_plan.py 2)"
+=======
+      "Bash(powershell -Command:*)"
+>>>>>>> 19dde37b83c378e4960c4ec0d65165e18eb451c1
     ]
   }
 }

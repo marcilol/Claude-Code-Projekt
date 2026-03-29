@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 Metadata-Version: 1.0
 Name: mfm
 Version: 1.0
@@ -8,3 +9,15 @@ Author-email: heshun@pku.edu.cn
 License: UNKNOWN
 Description: UNKNOWN
 Platform: UNKNOWN
+=======
+Metadata-Version: 1.0
+Name: mfm
+Version: 1.0
+Summary: UNKNOWN
+Home-page: UNKNOWN
+Author: heshun
+Author-email: heshun@pku.edu.cn
+License: UNKNOWN
+Description: UNKNOWN
+Platform: UNKNOWN
+>>>>>>> 19dde37b83c378e4960c4ec0d65165e18eb451c1
