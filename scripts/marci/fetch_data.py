@@ -27,9 +27,29 @@ import time
 import os
 import warnings
 import sys
+import requests
 from datetime import datetime, timedelta
 
 warnings.filterwarnings('ignore')
+
+def download_file_from_github(url, local_filename):
+    """Download a file from GitHub release and save it locally."""
+    response = requests.get(url, stream=True)
+    response.raise_for_status()  # Check if the request was successful
+    with open(local_filename, 'wb') as file:
+        for chunk in response.iter_content(chunk_size=8192):
+            file.write(chunk)
+    print(f"Downloaded {local_filename} from {url}")
+
+# URLs of the files in the GitHub release
+release_base_url = "https://github.com/marcilol/Claude-Code-Projekt/releases/download/v1/"
+russell3000_cross_sectional_data_url = release_base_url + "russell3000_cross_sectional_data.csv"
+russell3000_daily_prices_url = release_base_url + "russell3000_daily_prices.csv"
+russell3000_factor_exposures_historical_url = release_base_url + "russell3000_factor_exposures_historical.csv"
+russell3000_raw_data_url = release_base_url + "russell3000_raw_data.pkl"
+
+# Download the files from release
+download_file_from_github(russell3000_raw_data_url, 'data/model/russell3000_raw_data.pkl')
 
 RAW_DATA_PATH = 'data/model/russell3000_raw_data.pkl'
 STYLE_FACTORS = ['size', 'beta', 'momentum', 'residvol', 'nlsize', 'btop',
