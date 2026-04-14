@@ -25,7 +25,7 @@ def style_factor_norm(factors, capital):
     """
     weights = capital / capital.sum()
     weighted_mean = np.average(factors, weights=weights, axis=0)
-    equal_std = np.std(factors, axis=0)
+    equal_std = np.std(factors, axis=0, ddof=1)
     equal_std[equal_std == 0] = 1  # Avoid division by zero
     return (factors - weighted_mean) / equal_std
 
@@ -309,7 +309,7 @@ class BarraModel:
                 })
             except Exception as e:
                 print(f"    Error on {date}: {e}")
-                factor_returns.append(np.full(1 + self.P - 1 + self.Q, np.nan))
+                factor_returns.append(np.full(1 + self.P + self.Q, np.nan))
                 r2_values.append(np.nan)
 
         self.factor_ret = pd.DataFrame(factor_returns, columns=factor_names, index=self.dates)

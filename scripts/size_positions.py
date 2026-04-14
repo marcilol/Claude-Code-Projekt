@@ -114,18 +114,24 @@ def compute_idiosyncratic_volatility(tickers, factor_exp_df, factor_ret_df, end_
     return idio_vol
 
 
-def get_sector_volatility(factor_ret_df, end_date):
-    """Get sector-level volatility for shrunk mean-variance"""
-    factor_ret_filtered = factor_ret_df[factor_ret_df.index <= end_date]
+def get_sector_volatility(idio_vols, stock_sectors):
+    """Get sector-level average idiosyncratic volatility for shrunk mean-variance.
 
-    style_factors = ['size', 'beta', 'momentum', 'residvol', 'nlsize', 'btop', 'liquidity', 'earnyild', 'growth', 'leverage']
-    industry_factors = [c for c in factor_ret_df.columns
-                        if c not in style_factors + ['Country']]
+    Computes median idio vol per sector from stock-level estimates.
+    This is the correct shrinkage target (stock-specific vol scale, ~20-60%),
+    not factor return vol (~1-3%) which would make shrinkage ineffective.
+    """
+    from collections import defaultdict
+    sector_stocks = defaultdict(list)
+    for ticker, sector in stock_sectors.items():
+        vol = idio_vols.get(ticker)
+        if vol is not None and pd.notna(vol) and vol > 0:
+            sector_stocks[sector].append(vol)
 
     sector_vol = {}
-    for sector in industry_factors:
-        if sector in factor_ret_filtered.columns:
-            sector_vol[sector] = factor_ret_filtered[sector].std() * np.sqrt(252)
+    for sector, vols in sector_stocks.items():
+        if vols:
+            sector_vol[sector] = float(np.median(vols))
 
     return sector_vol
 
@@ -288,11 +294,10 @@ def backtest_weights(weights, factor_exp_df, start_date, end_date):
                 daily_return += weight * stock_ret.iloc[0]
                 total_weight += weight
 
-        # Normalize if some stocks missing
+        # Normalize if some stocks missing; skip day if no coverage
         if total_weight > 0:
             daily_return = daily_return / total_weight
-
-        portfolio_returns.append({'date': date, 'return': daily_return})
+            portfolio_returns.append({'date': date, 'return': daily_return})
 
     returns_df = pd.DataFrame(portfolio_returns)
 
@@ -372,7 +377,7 @@ def main(portfolio_path, decision_date='2025-07-01', end_date='2025-12-31',
 
     # Get sector info
     stock_sectors = get_stock_sectors(valid_tickers, factor_exp_df, decision_date)
-    sector_vols = get_sector_volatility(factor_ret_df, decision_date)
+    sector_vols = get_sector_volatility(idio_vols, stock_sectors)
 
     # Compute alphas (uniform expected return for now)
     # Convert 6-month return to annualized

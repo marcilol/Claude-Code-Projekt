@@ -83,7 +83,7 @@ def get_stock_factor_exposures(tickers, factor_exp_df, style_factors):
     for ticker in tickers:
         row = matched[matched['ticker'] == ticker]
         if len(row) > 0:
-            exposures = [row[f].values[0] if f in row.columns else 0 for f in style_factors]
+            exposures = [row[f].values[0] if f in row.columns and pd.notna(row[f].values[0]) else 0 for f in style_factors]
             exposure_matrix.append(exposures)
             matched_tickers.append(ticker)
 

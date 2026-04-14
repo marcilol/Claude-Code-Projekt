@@ -112,10 +112,7 @@ def calculate_portfolio_factor_exposure(weights_df, exposures_df, style_factors,
 
     portfolio_industry = {}
     for industry in industry_factors:
-        if industry in merged.columns:
-            portfolio_industry[industry] = (merged['weight'] * merged[industry]).sum()
-        else:
-            portfolio_industry[industry] = 0
+        portfolio_industry[industry] = merged.loc[merged['sector'] == industry, 'weight'].sum()
 
     return portfolio_style, portfolio_industry
 
@@ -282,7 +279,6 @@ def main(portfolio_path):
     print("-" * 50)
     for factor in style_factors:
         exp = style_exp.get(factor, 0)
-        direction = "+" if exp > 0 else ""
         interpretation = ""
         interp_map = {
             'size': ("(large cap)", "(small cap)"),
@@ -300,7 +296,7 @@ def main(portfolio_path):
             pos, neg = interp_map[factor]
             interpretation = pos if exp > 0 else neg
 
-        print(f"  {factor:12s}: {direction}{exp:+.2f}  {interpretation}")
+        print(f"  {factor:12s}: {exp:+.2f}  {interpretation}")
 
     # Industry exposures
     print("\nINDUSTRY EXPOSURES:")

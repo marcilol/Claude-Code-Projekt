@@ -860,7 +860,8 @@ def main():
         russell_df = pd.read_csv('data/input/russell_constituents.csv', sep=';')
         tickers = russell_df['Ticker'].tolist()
         tickers = [t.replace('.', '-') if '.' in t else t for t in tickers]
-        sectors = dict(zip(russell_df['Ticker'].tolist(), russell_df['Sector'].tolist()))
+        sectors = dict(zip([t.replace('.', '-') if '.' in t else t for t in russell_df['Ticker'].tolist()],
+                           russell_df['Sector'].tolist()))
         print(f"Found {len(tickers)} tickers\n")
 
         print("Fetching risk-free rate (^IRX)...")
