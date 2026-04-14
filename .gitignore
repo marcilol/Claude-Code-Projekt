@@ -4,6 +4,13 @@ data/model/russell3000_cross_sectional_data.csv
 data/model/russell3000_daily_prices.csv
 data/model/russell3000_raw_data.pkl
 
+# Excel replication / validation materials
+data/excel_replication/
+scripts/export_replication_data.py
+scripts/export_raw_inputs_excel.py
+scripts/export_universe_excel.py
+
+
 # Python
 __pycache__/
 *.pyc

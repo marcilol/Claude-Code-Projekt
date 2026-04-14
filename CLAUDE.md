@@ -8,22 +8,22 @@ Python tool for factor-based portfolio risk analysis using MSCI Barra-style cros
 2. **Factor-Neutral Optimization** - Minimize factor exposure while staying close to original weights
 3. **Alpha Sizing** - Convert expected returns into optimal position sizes with backtesting
 4. **Factor Risk Management** - MCFR analysis, risk limits, and trade suggestions (Chapter 7)
+5. **Verification & Testing** - 67 automated tests validating model math and outputs
 
 ## Key Commands
 
 ```bash
 # Step 1: Fetch historical data (run once, takes ~60 min)
 python scripts/fetch_data.py
-# Or recompute factors from saved raw data (no re-fetch):
-python scripts/fetch_data.py --compute-only
+python scripts/fetch_data.py --compute-only   # recompute factors from cached raw data
 
-# Step 2: Run Barra factor model (run after data fetch)
+# Step 2: Run Barra factor model
 python scripts/run_factor_model.py
 
 # Step 3: Analyze a portfolio
 python scripts/analyze_portfolio.py data/input/portfolios/Own_Portfolio_dated.csv
 
-# Step 4: Optimize for factor neutrality (optional)
+# Step 4: Optimize for factor neutrality
 python scripts/optimize_portfolio.py data/input/portfolios/Own_Portfolio_dated.csv
 
 # Step 5: Alpha sizing with backtest (Chapter 6)
@@ -37,6 +37,9 @@ python scripts/compare_sizing_methods.py
 python scripts/manage_risk.py data/input/portfolios/Own_Portfolio_dated.csv
 python scripts/manage_risk.py data/input/portfolios/Own_Portfolio_dated.csv --limits
 python scripts/manage_risk.py data/input/portfolios/Own_Portfolio_dated.csv --limits --max-stock=15 --min-idio=60
+
+# Step 8: Run verification tests
+pytest tests/ -v
 ```
 
 ## File Structure
@@ -45,7 +48,6 @@ python scripts/manage_risk.py data/input/portfolios/Own_Portfolio_dated.csv --li
 portfolio-xray/
 ├── CLAUDE.md
 ├── requirements.txt
-├── Chapter 6 Summary - Alpha Sizing Heuristics.pdf  # Reference material
 ├── scripts/
 │   ├── fetch_data.py              # Fetches 2y data + computes factors (--compute-only)
 │   ├── run_factor_model.py        # Runs Barra cross-sectional regression
@@ -54,271 +56,136 @@ portfolio-xray/
 │   ├── size_positions.py          # Alpha sizing with backtest (Chapter 6)
 │   ├── compare_sizing_methods.py  # Multi-portfolio sizing comparison + charts
 │   └── manage_risk.py             # Factor risk management (Chapter 7)
+├── tests/
+│   ├── conftest.py                # Shared fixtures, import helpers, constants
+│   ├── test_sanity_checks.py      # Phase 1: Model output validation
+│   ├── test_unit_zscore.py        # Phase 2: Z-scoring math
+│   ├── test_unit_factor_risk.py   # Phase 2: Factor variance (b'Ωb)
+│   ├── test_unit_mcfr.py          # Phase 2: Marginal contribution to factor risk
+│   ├── test_unit_sizing.py        # Phase 2: All 4 sizing methods
+│   ├── test_unit_idio_vol.py      # Phase 2: Idiosyncratic volatility
+│   ├── test_unit_portfolio.py     # Phase 2: Portfolio loading, weight calc
+│   ├── test_regression.py         # Phase 3: Baseline comparison (1% tolerance)
+│   ├── test_benchmarks.py         # Phase 4: SPY regression, external checks
+│   ├── baselines/                 # Saved model outputs for regression tests
+│   └── TEST_REPORT.md             # Detailed test descriptions and results
 ├── data/
 │   ├── input/
 │   │   ├── russell_constituents.csv  # Russell 3000 tickers + sectors
 │   │   └── portfolios/               # Portfolio CSV files
-│   │       ├── Own_Portfolio_dated.csv
-│   │       ├── Dynamic_AI.csv
-│   │       ├── Robotics.csv
-│   │       ├── Fiscal_Primacy.csv
-│   │       ├── Small_Themes.csv
-│   │       └── ...
 │   └── model/                        # Model outputs
 │       ├── russell3000_factor_exposures_historical.csv  # Stock factor data (185 MB)
 │       ├── russell3000_cross_sectional_data.csv         # Barra-format data (120 MB)
 │       ├── barra_factor_returns.csv           # Daily factor returns (22 factors)
-│       ├── barra_factor_covariance.csv        # Adjusted 22x22 covariance matrix
+│       ├── barra_factor_covariance.csv        # Adjusted 22×22 covariance matrix
 │       ├── barra_factor_statistics.csv        # Factor mean, vol, t-stat
-│       ├── barra_r2.csv                       # Model R-squared by date
-│       ├── sizing_methods_comparison.png      # Sharpe ratio chart
-│       └── sizing_methods_returns.png         # Returns chart
-├── reference/
-│   ├── Barra-master/         # Reference Barra implementation
-│   └── Quantastic/           # Original R project
-└── archive/                  # Old/deprecated files
+│       └── barra_r2.csv                       # Model R² by date
+├── reference/                     # Reference implementations (Barra, Quantastic)
+└── archive/                       # Old/deprecated files
 ```
 
 ## Portfolio CSV Format
 
-Supports comma or semicolon delimited. Auto-detected.
+Supports comma or semicolon delimited (auto-detected). Column names are case-insensitive.
 
 **Required columns:** `ticker`, `shares`
-
 **Optional:** `costdate`/`BuyDate`, `sell_date`
-
-Example:
-```csv
-Ticker;Shares;BuyDate
-AAPL;100;2024-01-15
-MSFT;50;2024-02-20
-```
 
 ## Factor Model
 
-### Barra Cross-Sectional Regression
-For each day, regress stock returns against factor exposures:
-```
-r_i,t = f_market + f_industry + sum(beta_i,k * f_k,t) + epsilon_i,t
+### How It Works
+Each trading day, a cross-sectional regression across ~2,500 Russell 3000 stocks estimates how much each factor was rewarded:
 
-r = stock return
-beta = factor exposures (known from fundamentals, z-scored)
-f = factor returns (estimated via cross-sectional regression)
-epsilon = idiosyncratic return (stock-specific)
+```
+return_i = f_country + f_industry_i + Σ(z_i,k × f_k) + ε_i
+
+z_i,k = stock i's z-scored exposure to factor k (known input)
+f_k   = factor k's return that day (estimated by OLS)
+ε_i   = stock-specific residual
 ```
 
-### Style Factors (10 factors, CNE5-style)
+WLS regression with √(market cap) weights. R² averages ~28% cross-sectionally (range 3%–89%).
+
+### 22 Factors
+
+**1 Market (Country)** + **11 GICS Industry sectors** + **10 CNE5-style Style factors:**
+
 | Factor | Calculation | Interpretation |
 |--------|-------------|----------------|
-| Size | LNCAP = log(market cap) | Large (+) vs Small (-) |
-| Beta | EWM regression vs market (hl=63) | High beta (+) vs Low beta (-) |
-| Momentum | EWM of lagged excess log returns (skip 21d, hl=126) | Winners (+) vs Losers (-) |
-| Resid Vol | 0.74*DASTD + 0.16*CMRA + 0.10*HSIGMA, orthog vs beta+size | High resid vol (+) vs Low (-) |
+| Size | log(market cap) | Large (+) vs Small (−) |
+| Beta | EWM regression vs market (hl=63) | High beta (+) vs Low beta (−) |
+| Momentum | EWM of lagged excess log returns (skip 21d, hl=126) | Winners (+) vs Losers (−) |
+| Resid Vol | 0.74×DASTD + 0.16×CMRA + 0.10×HSIGMA, orthog vs beta+size | Volatile (+) vs Stable (−) |
 | NL Size | Cube of z(size), orthog vs size | Mid-cap tilt (+) |
-| BTOP | Book-to-Price | Value (+) vs Growth (-) |
-| Liquidity | 0.35*STOM + 0.35*STOQ + 0.30*STOA, orthog vs size | Liquid (+) vs Illiquid (-) |
-| Earn Yield | 0.656*CETOP + 0.344*ETOP (partial, no EPFWD) | High yield (+) vs Low (-) |
-| Growth | 0.338*EGRO + 0.662*SGRO (partial, no analyst forecasts) | High growth (+) vs Low (-) |
-| Leverage | 0.38*MLEV + 0.35*DTOA + 0.27*BLEV | High leverage (+) vs Low (-) |
+| BTOP | Book-to-Price | Value (+) vs Growth (−) |
+| Liquidity | 0.35×STOM + 0.35×STOQ + 0.30×STOA, orthog vs size | Liquid (+) vs Illiquid (−) |
+| Earn Yield | 0.656×CETOP + 0.344×ETOP (partial, no EPFWD) | High yield (+) vs Low (−) |
+| Growth | 0.338×EGRO + 0.662×SGRO (partial, no analyst forecasts) | High growth (+) vs Low (−) |
+| Leverage | 0.38×MLEV + 0.35×DTOA + 0.27×BLEV | High leverage (+) vs Low (−) |
 
-### Industry Factors (11 GICS sectors)
-One-hot encoded dummy variables. Factor returns estimated via regression represent "pure" industry effect after controlling for style factors.
+**Z-scoring convention:** Cap-weighted mean = 0, equal-weighted std = 1 per factor per date. Orthogonalized factors (residvol, nlsize, liquidity) may have CW mean up to ±0.7 after orthogonalization.
 
 ### Model Adjustments (MSCI-style)
-1. **WLS Regression**: sqrt(market cap) weights
+1. **WLS Regression**: √(market cap) weights
 2. **Industry Neutrality**: Constraint to handle multicollinearity with market factor
 3. **Newey-West**: Autocorrelation adjustment (q=2, halflife=252)
 4. **Eigenfactor Risk Adjustment**: Monte Carlo simulation (scale=1.4)
 5. **Volatility Regime Adjustment**: Adaptive halflife=42
 
-### Estimated Factor Returns (Feb 2025 - Jan 2026, 10-factor CNE5 model, R²=13.0%)
-| Factor | Ann. Return | Ann. Vol | t-stat |
-|--------|-------------|----------|--------|
-| Country (Market) | +26.6% | 19.4% | 1.35 |
-| Earn Yield | +7.4% | 2.2% | 3.38 |
-| BTOP | -7.5% | 2.4% | -3.07 |
-| Beta | +25.9% | 9.0% | 2.84 |
-| Resid Vol | +37.0% | 14.0% | 2.59 |
-| Utilities | +26.5% | 13.7% | 1.91 |
-| Industrials | +11.0% | 6.4% | 1.68 |
-| NL Size | +6.6% | 3.9% | 1.65 |
-| Materials | +15.1% | 10.6% | 1.40 |
-| Leverage | -3.4% | 2.4% | -1.40 |
-| Growth | -3.6% | 2.9% | -1.22 |
-| Info Technology | -8.7% | 7.9% | -1.08 |
-| Liquidity | -6.7% | 6.7% | -0.99 |
+## Risk Decomposition
 
-## Key Metrics
+```
+Total Variance = Factor Variance + Idiosyncratic Variance
+Factor Variance = b' × Ω × b        (b = portfolio factor exposures, Ω = factor covariance)
+Idio Variance   = Σ(w_i² × σ_idio_i²)
+```
 
-### Risk Decomposition
-- **Factor Volatility**: Risk from systematic factor exposure
-- **Idiosyncratic Volatility**: Stock-specific risk (diversifiable)
-- **Total Volatility**: sqrt(factor_var + idio_var)
+- **>50% idiosyncratic** = stock-picking portfolio (good diversification of factor risk)
+- **<50% idiosyncratic** = factor-driven portfolio (exposed to systematic risk)
 
-### Interpretation
-- **>50% idiosyncratic** = Good stock-picking portfolio
-- **<50% idiosyncratic** = Heavily exposed to factor risk
+## Alpha Sizing (Chapter 6)
 
-### Portfolio Factor Exposure
-Weighted average of stock factor z-scores. Target: close to 0 for factor-neutral.
+| Method | Formula | Description |
+|--------|---------|-------------|
+| **Proportional** | NMV = κ × α | Simple, empirically best |
+| Risk Parity | NMV = κ × α / σ | Scales down high-vol positions |
+| Mean-Variance | NMV = κ × α / σ² | Classic Markowitz, penalizes vol heavily |
+| Shrunk MV | NMV = κ × α / (p×σ² + (1−p)×σ²_sector) | Shrinks toward sector vol (p=0.75) |
+
+**Key finding:** Proportional sizing empirically outperforms MV methods (avg Sharpe 2.64 vs 2.21, wins 4/5 portfolios) because estimation error in volatility hurts the more complex methods.
+
+## Factor Risk Management (Chapter 7)
+
+**MCFR (Marginal Contribution to Factor Risk):**
+```
+MCFR_i = [B × Ω × b]_i / √(b' × Ω × b)
+```
+Positive MCFR = position adds to factor risk. Negative = hedges it.
+
+**Default risk limits:** Min 75% idio variance, max 10% single stock, HHI < 2× equal-weight.
+
+## Verification & Testing
+
+67 automated tests across 4 phases. Run with `pytest tests/ -v`. See `tests/TEST_REPORT.md` for full details.
+
+| Phase | Tests | What it validates |
+|-------|-------|-------------------|
+| 1. Sanity Checks | 11 | Model output CSVs: z-score conventions, no NaN, R² range 2–95%, covariance positive definite, 22 factor names consistent across files |
+| 2. Unit Tests | 34 | Core math against hand-calculated answers: z-scoring, factor variance (b'Ωb), MCFR, all 4 sizing methods, idiosyncratic volatility, portfolio loading |
+| 3. Regression | 4 | Current outputs vs saved baselines within 1% tolerance (catches unintended drift after code changes) |
+| 4. Benchmarks | 7 | SPY returns regressed on factor returns (R² = 99.1%), beta-market correlation, covariance symmetry, low autocorrelation |
+
+**Key validation:** The factor model explains 99.1% of SPY's daily return variance (Country factor β = 1.04, industry coefficients match S&P 500 sector weights). Residual vol is only 2% annualized vs SPY's 20% total vol.
+
+## Known Quirks
+- **Date convention:** Factor model labels returns 1 business day ahead of yfinance. Factor date T = yfinance date T−1. The returns themselves are correct (0.99 correlation after alignment). Any code joining factor dates with external price data must shift by 1 day.
+- **Factor covariance is in DAILY units** — multiply by 252 to annualize variance.
+- **Idiosyncratic variance is already annualized:** (std × √252)².
+- **Beta warmup:** Beta needs ~252 days of prior data. The first ~30% of dates in the dataset have beta z-scores of 0.
+- **Partial factors:** Earnings Yield missing EPFWD (68% of CNE5 weight), Growth missing EGRLF/EGRSF (29% of weight) — would require a paid data API (~$20/month via Financial Modeling Prep).
 
 ## Data Sources
 - **Stock prices/fundamentals**: Yahoo Finance (`yfinance`)
 - **Russell 3000 constituents**: `data/input/russell_constituents.csv`
-- **Factor model**: ~1 year of point-in-time data (Feb 2025 - Jan 2026), 244 trading days
-- **Coverage**: ~2,541 stocks per day (98% of Russell 3000)
-- **Raw data cache**: `data/model/russell3000_raw_data.pkl` (use `--compute-only` to iterate on factors)
-
-## Factor-Neutral Optimization
-
-The optimizer uses quadratic programming to minimize factor variance:
-```
-minimize: w' * B * F * B' * w + lambda * ||w - w0||^2
-
-subject to:
-  - sum(w) = 1 (fully invested)
-  - w >= 0 (long-only)
-```
-
-Key insight: Cannot achieve factor neutrality with long-only constraint if all stocks share similar factor profiles. Solutions:
-1. Add stocks with opposite factor characteristics
-2. Use shorting or factor hedges (ETFs)
-3. Accept the factor tilt if intentional
-
-## Alpha Sizing (Chapter 6)
-
-Based on Paleologo's "Advanced Portfolio Management" Chapter 6.
-
-### Core Question
-How do you convert expected returns (alphas) into dollar positions that maximize risk-adjusted returns?
-
-### Four Sizing Methods (Long-Only)
-
-| Method | Formula | Description |
-|--------|---------|-------------|
-| **Proportional** | NMV = k * alpha | Simple, empirically best |
-| Risk Parity | NMV = k * alpha / sigma | Scales down high-vol positions |
-| Mean-Variance | NMV = k * alpha / sigma^2 | Classic Markowitz, penalizes vol heavily |
-| Shrunk MV | NMV = k * alpha / (p*sigma^2 + (1-p)*sigma_sector^2) | Shrinks toward sector vol (p=0.75) |
-
-### Idiosyncratic Volatility Calculation
-Computed from Barra model residuals (not total volatility):
-```
-epsilon_i,t = r_i,t - f_market - f_industry - sum(beta_i,k * f_k,t)
-sigma_idio = std(epsilon) * sqrt(252)
-```
-
-This isolates stock-specific risk from factor risk.
-
-### Key Finding: Simple Beats Complex
-
-**Proportional sizing empirically outperforms sophisticated MV methods** because:
-1. Estimation error in volatility hurts MV-based approaches
-2. Low-vol stocks get oversized in MV, amplifying mistakes
-3. High-vol stocks that MV penalizes often perform well
-
-### Backtest Results (Jul-Dec 2025, 30% expected return assumption)
-
-| Portfolio | Proportional | Risk Parity | Mean-Var | Shrunk MV |
-|-----------|-------------|-------------|----------|-----------|
-| Own Portfolio | **2.99** | 2.85 | 2.63 | 2.65 |
-| Dynamic AI | **2.77** | 2.59 | 2.45 | 2.46 |
-| Robotics | **1.88** | 1.78 | 1.64 | 1.64 |
-| Fiscal Primacy | 3.65 | **3.72** | 3.65 | 3.64 |
-| Small Themes | **1.92** | 1.24 | 0.69 | 0.73 |
-
-*Values shown are Sharpe ratios. Bold = best method for that portfolio.*
-
-### Summary Statistics
-| Method | Avg Sharpe | Avg Return | # Wins |
-|--------|------------|------------|--------|
-| **Proportional** | **2.64** | **46.2%** | **4/5** |
-| Risk Parity | 2.44 | 38.2% | 1/5 |
-| Mean-Variance | 2.21 | 32.5% | 0/5 |
-| Shrunk MV | 2.22 | 32.7% | 0/5 |
-
-### Usage
-```bash
-# Single portfolio analysis
-python scripts/size_positions.py portfolio.csv --decision=2025-07-01 --end=2025-12-31 --gmv=100000
-
-# Multi-portfolio comparison with charts
-python scripts/compare_sizing_methods.py
-```
-
-Output charts saved to:
-- `data/model/sizing_methods_comparison.png` (Sharpe ratios)
-- `data/model/sizing_methods_returns.png` (Total returns)
-
-## Factor Risk Management (Chapter 7)
-
-Based on Paleologo's "Advanced Portfolio Management" Chapter 7.
-
-### Core Concept
-Manage portfolio risk by decomposing it into factor and idiosyncratic components, identifying which positions contribute most to factor risk via MCFR, and checking against risk limits.
-
-### Key Metric: MCFR (Marginal Contribution to Factor Risk)
-```
-b = B' * w              (portfolio factor exposure)
-MCFR_i = [B * Ω_f * b]_i / √(b' * Ω_f * b)
-```
-MCFR measures how much each position contributes to the portfolio's factor risk. Positive MCFR = adds to factor risk; negative = hedges it.
-
-### Output Tables
-1. **Risk Decomposition** - Hierarchical breakdown: Total > Idio/Factor > Market/Style/Industry > individual factors. Shows %Var, $Exposure, $Vol, MCFR per factor.
-2. **Position Risk** - Per-stock NMV, %GMV, idio vol, MCFR, top factor exposure, breach flags.
-3. **Limit Breach Summary** - Checks %idio variance (min 75%), max single stock (10%), HHI concentration.
-4. **Suggested Trades** - MCFR-ranked reduction recommendations when limits are breached.
-
-### Default Risk Limits
-| Limit | Default | Rationale |
-|-------|---------|-----------|
-| Min % Idio Variance | 75% | Ensure stock-picking dominates |
-| Max Single Stock | 10% | Concentration risk (relaxed from book's 4% for small portfolios) |
-| HHI | 2x equal-weight | Prevent excessive concentration |
-
-### Usage
-```bash
-# Basic risk analysis (Tables 1-2)
-python scripts/manage_risk.py data/input/portfolios/Own_Portfolio_dated.csv
-
-# With limit checking (Tables 1-4)
-python scripts/manage_risk.py data/input/portfolios/Own_Portfolio_dated.csv --limits
-
-# Custom limits
-python scripts/manage_risk.py portfolio.csv --limits --max-stock=15 --min-idio=60
-```
-
-## Notes
-- Data fetch takes ~60 minutes for full Russell 3000
-- Raw data cached to `data/model/russell3000_raw_data.pkl` (80 MB) — use `--compute-only` to iterate on factor definitions without re-fetching
-- Model R-squared averages ~11.75% (19-factor model, Feb 2025 - Jan 2026, 246 trading days)
-- Some portfolio stocks may not be in Russell 3000 (handled gracefully)
-- AVIO ticker is delisted (skipped automatically)
-- Factor covariance is in DAILY units — multiply by 252 to annualize variance
-- Idiosyncratic variance is already annualized: (std * sqrt(252))^2
-
----
-
-## Current Status (Feb 2026)
-
-The model implements **10 CNE5-style style factors** + 11 GICS industry factors + 1 Country factor = **22 total factors**.
-
-### CNE5 Implementation Summary
-All factor descriptors follow the MSCI Barra CNE5 methodology (see `CNE5_Model_Technical_Summary.md`):
-- **Excess log returns** used for momentum (RSTR) and CMRA
-- **Exponential weighting** for Beta (hl=63), Momentum (hl=126), DASTD (hl=42), HSIGMA (hl=63)
-- **Composite descriptors**: ResidVol, Liquidity, Earnings Yield, Growth, Leverage built from z-scored sub-descriptors
-- **Orthogonalization**: ResidVol vs (beta, size), NL Size vs size, Liquidity vs size
-- **Standardization**: Cap-weighted mean=0, equal-weighted std=1
-- **Risk-free rate**: ^IRX (13-week T-bill), stored in pickle with raw data
-
-### Partial Factors (data limitations)
-Without a paid API for analyst consensus forecasts:
-- **Earnings Yield**: Uses CETOP + ETOP only (no EPFWD, 32% of original weight)
-- **Growth**: Uses EGRO + SGRO only (no EGRLF/EGRSF, 71% of original weight)
-
-### Optional Enhancement: Paid data API
-Adding Financial Modeling Prep (~$20/month) would provide analyst consensus forecasts, enabling:
-- EPFWD (68% weight in Earnings Yield — currently missing)
-- EGRLF, EGRSF (29% weight in Growth — currently missing)
+- **Sample period**: Feb 2025 – Jan 2026, 244 trading days, ~2,541 stocks/day
+- **Raw data cache**: `data/model/russell3000_raw_data.pkl` (80 MB)

@@ -465,7 +465,7 @@ def suggest_trades(weights_df, mcfr_series, idio_vols, pct_idio_var,
         mcfr_val = mcfr_series.get(ticker, 0)
 
         # Flag if position breaches single-stock limit or has high MCFR
-        needs_trade = (pct_gmv > max_single_stock_pct) or (abs(mcfr_val) > 0.01)
+        needs_trade = (pct_gmv > max_single_stock_pct) or (mcfr_val > 0.01)
         if not needs_trade:
             continue
 
