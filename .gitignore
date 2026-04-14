@@ -9,7 +9,7 @@ data/excel_replication/
 scripts/export_replication_data.py
 scripts/export_raw_inputs_excel.py
 scripts/export_universe_excel.py
-EXCEL_REPLICATION_GUIDE.md
+
 
 # Python
 __pycache__/
