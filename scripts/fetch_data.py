@@ -16,6 +16,8 @@ Composite descriptors:
 Usage:
     python scripts/fetch_data.py              # Full fetch + compute
     python scripts/fetch_data.py --compute-only  # Recompute from saved raw data
+    python scripts/fetch_data.py --from-db       # Compute from SQLite database
+    python scripts/fetch_data.py --from-db --universe dax40  # Non-default universe
     python scripts/fetch_data.py --export        # Export raw data to Excel for QC
 """
 
@@ -33,6 +35,133 @@ warnings.filterwarnings('ignore')
 RAW_DATA_PATH = 'data/model/russell3000_raw_data.pkl'
 STYLE_FACTORS = ['size', 'beta', 'momentum', 'residvol', 'nlsize', 'btop',
                  'liquidity', 'earnyild', 'growth', 'leverage']
+
+
+def load_from_db(universe='russell3000'):
+    """
+    Load stock data from SQLite database, returning the same format
+    as load_raw_data() so the computation pipeline works unchanged.
+
+    Returns: (all_stock_data, failed, rf_daily)
+    """
+    from data_manager import MarketDB
+
+    db = MarketDB()
+    tickers_sectors = db.get_universe_tickers(universe)
+    if not tickers_sectors:
+        raise ValueError(f"No tickers in universe '{universe}'. "
+                         f"Run: python scripts/update_data.py init --universe {universe}")
+
+    tickers = [t[0] for t in tickers_sectors]
+    # Prefer gic_group (25 GICS Groups) over sector (11 GICS Sectors) when available
+    sectors_map = {t[0]: (t[2] or t[1]) for t in tickers_sectors}
+
+    print(f"  Loading from database: {len(tickers)} tickers in '{universe}'")
+
+    # Load all prices
+    prices_df = db.get_daily_prices(tickers)
+    if prices_df.empty:
+        raise ValueError("No price data in database. "
+                         "Run: python scripts/update_data.py prices --universe " + universe)
+
+    # Load fundamentals
+    fund_q_df = db.get_fundamentals_quarterly(tickers)
+    fund_a_df = db.get_fundamentals_annual(tickers)
+
+    # Load risk-free rate
+    rf_series = db.get_risk_free_rate()
+    rf_daily = rf_series if len(rf_series) > 0 else None
+    if rf_daily is not None:
+        rf_daily.name = 'rf'
+        print(f"  Risk-free rate: {len(rf_daily)} days")
+    else:
+        print("  WARNING: No risk-free rate in database")
+
+    # Group prices by ticker
+    prices_grouped = {t: g for t, g in prices_df.groupby('ticker')}
+
+    # Group quarterly fundamentals by ticker
+    fund_q_grouped = {}
+    if not fund_q_df.empty:
+        fund_q_grouped = {t: g for t, g in fund_q_df.groupby('ticker')}
+
+    # Group annual fundamentals by ticker
+    fund_a_grouped = {}
+    if not fund_a_df.empty:
+        fund_a_grouped = {t: g for t, g in fund_a_df.groupby('ticker')}
+
+    all_stock_data = []
+    failed = []
+
+    for ticker in tickers:
+        if ticker not in prices_grouped:
+            failed.append(ticker)
+            continue
+
+        pdf = prices_grouped[ticker].sort_values('date')
+
+        if len(pdf) < 252:
+            failed.append(ticker)
+            continue
+
+        # Skip penny stocks: median close < $1 over last 60 days
+        recent_close = pdf['close'].tail(60)
+        if recent_close.median() < 1.0:
+            failed.append(ticker)
+            continue
+
+        # Build history DataFrame (mimic yfinance format)
+        hist = pd.DataFrame({
+            'Open': pdf['open'].values,
+            'High': pdf['high'].values,
+            'Low': pdf['low'].values,
+            'Close': pdf['close'].values,
+            'Volume': pdf['volume'].values,
+        }, index=pd.DatetimeIndex(pdf['date']))
+
+        shares_out = pdf['shares_out'].dropna().iloc[-1] if pdf['shares_out'].notna().any() else np.nan
+
+        # Build quarterly dict (same format as yfinance fetcher)
+        q = {}
+        quarterly_fields = ['book_equity', 'net_income', 'depreciation', 'revenue',
+                            'long_term_debt', 'total_debt', 'total_assets', 'preferred_equity']
+        if ticker in fund_q_grouped:
+            qdf = fund_q_grouped[ticker]
+            for field in quarterly_fields:
+                if field in qdf.columns:
+                    vals = qdf[['report_date', field]].dropna(subset=[field])
+                    q[field] = {pd.Timestamp(r['report_date']): r[field]
+                                for _, r in vals.iterrows()}
+                else:
+                    q[field] = {}
+        else:
+            for field in quarterly_fields:
+                q[field] = {}
+
+        # Annual EPS/revenue
+        if ticker in fund_a_grouped:
+            adf = fund_a_grouped[ticker]
+            eps_vals = adf[['report_date', 'eps']].dropna(subset=['eps'])
+            q['annual_eps'] = {pd.Timestamp(r['report_date']): r['eps']
+                               for _, r in eps_vals.iterrows()}
+            rev_vals = adf[['report_date', 'revenue']].dropna(subset=['revenue'])
+            q['annual_revenue'] = {pd.Timestamp(r['report_date']): r['revenue']
+                                   for _, r in rev_vals.iterrows()}
+        else:
+            q['annual_eps'] = {}
+            q['annual_revenue'] = {}
+
+        all_stock_data.append({
+            'ticker': ticker,
+            'history': hist,
+            'shares_outstanding': shares_out,
+            'sector': sectors_map.get(ticker, 'Unknown'),
+            'quarterly': q,
+        })
+
+    print(f"  Loaded: {len(all_stock_data)} stocks, {len(failed)} failed/insufficient data")
+    db.close()
+    return all_stock_data, failed, rf_daily
 
 
 def fetch_risk_free_rate(period='2y'):
@@ -268,9 +397,16 @@ def compute_stock_descriptors(stock_data, dates, rf_series):
             'net_income': stock_data.get('quarterly_net_income', {}),
         }
 
+    # --- Filter zero/negative prices ---
+    hist = hist[hist['Close'] > 0].copy()
+    if len(hist) < 61:
+        return pd.DataFrame()
+
     # --- Basic returns ---
     hist['return'] = hist['Close'].pct_change()
     hist['log_return'] = np.log(hist['Close'] / hist['Close'].shift(1))
+    # Winsorize extreme daily returns (cap at ±25% log return)
+    hist['log_return'] = hist['log_return'].clip(-0.25, 0.25)
 
     # Merge risk-free rate
     if rf_series is not None:
@@ -335,6 +471,15 @@ def compute_stock_descriptors(stock_data, dates, rf_series):
             continue
 
         last = hist_to_date.iloc[-1]   # day t (return only)
+        # Skip if this stock's latest price is stale (>3 calendar days behind)
+        last_date = hist_to_date.index[-1]
+        if hasattr(last_date, 'tz_localize'):
+            gap = (date_ts - last_date).days if hasattr(date_ts - last_date, 'days') else 0
+        else:
+            gap = 0
+        if gap > 5:
+            continue
+
         prev = hist_to_date.iloc[-2]   # day t-1 (all factor exposures)
         daily_return = last['log_return']
         if pd.isna(daily_return):
@@ -408,19 +553,22 @@ def compute_stock_descriptors(stock_data, dates, rf_series):
     return pd.DataFrame(records)
 
 
-def create_cross_sectional_dataset(all_stock_data, rf_series, target_days=504):
+def create_cross_sectional_dataset(all_stock_data, rf_series, target_days=504,
+                                   min_coverage=0.80):
     """Create dataset with all CNE5 descriptors for all stocks."""
-    print(f"\nDetermining common trading dates...")
-    all_dates = None
+    print(f"\nDetermining trading dates (>={min_coverage:.0%} stock coverage)...")
+    from collections import Counter
+    date_counts = Counter()
     for sd in all_stock_data:
-        stock_dates = set(sd['history'].index.strftime('%Y-%m-%d'))
-        if all_dates is None:
-            all_dates = stock_dates
-        else:
-            all_dates = all_dates.intersection(stock_dates)
+        for d in sd['history'].index.strftime('%Y-%m-%d'):
+            date_counts[d] += 1
 
-    all_dates = sorted(list(all_dates))[-target_days:]
-    print(f"  Found {len(all_dates)} common trading dates")
+    n_stocks = len(all_stock_data)
+    threshold = int(n_stocks * min_coverage)
+    all_dates = sorted([d for d, cnt in date_counts.items() if cnt >= threshold])
+    all_dates = all_dates[-target_days:]
+    print(f"  Found {len(all_dates)} dates with >={min_coverage:.0%} coverage "
+          f"(threshold: {threshold}/{n_stocks} stocks)")
     print(f"  Date range: {all_dates[0]} to {all_dates[-1]}")
 
     print(f"\nComputing CNE5 descriptors for {len(all_stock_data)} stocks...")
@@ -518,13 +666,20 @@ def compute_composites(df):
                 results.append(pd.Series(0.0, index=group.index))
                 continue
             w = caps[valid] / caps[valid].sum()
-            cw_mean = (w * vals[valid]).sum()
-            ew_std = vals[valid].std()
+            raw_mean = vals[valid].mean()
+            raw_std = vals[valid].std()
+            if raw_std == 0:
+                results.append(pd.Series(0.0, index=group.index))
+                continue
+            clipped = vals[valid].clip(raw_mean - 3.5 * raw_std,
+                                       raw_mean + 3.5 * raw_std)
+            cw_mean = (w * clipped).sum()
+            ew_std = clipped.std()
             if ew_std == 0:
                 results.append(pd.Series(0.0, index=group.index))
                 continue
             zscored = pd.Series(np.nan, index=group.index)
-            zscored[valid] = (vals[valid] - cw_mean) / ew_std
+            zscored[valid] = (clipped - cw_mean) / ew_std
             results.append(zscored)
         df[col] = pd.concat(results)
 
@@ -574,13 +729,24 @@ def zscore_by_date(df, columns):
                 results.append(pd.Series(0.0, index=group.index))
                 continue
             w = caps[valid] / caps[valid].sum()
-            cw_mean = (w * vals[valid]).sum()
-            ew_std = vals[valid].std()
+            # Step 1: Winsorize raw values at ±3.5σ BEFORE z-scoring.
+            # Prevents extreme outliers from inflating std and compressing
+            # all normal values to near-zero z-scores.
+            raw_mean = vals[valid].mean()
+            raw_std = vals[valid].std()
+            if raw_std == 0:
+                results.append(pd.Series(0.0, index=group.index))
+                continue
+            clipped = vals[valid].clip(raw_mean - 3.5 * raw_std,
+                                       raw_mean + 3.5 * raw_std)
+            # Step 2: Z-score the winsorized values (CW mean=0, EW std=1)
+            cw_mean = (w * clipped).sum()
+            ew_std = clipped.std()
             if ew_std == 0:
                 results.append(pd.Series(0.0, index=group.index))
                 continue
             zscored = pd.Series(np.nan, index=group.index)
-            zscored[valid] = (vals[valid] - cw_mean) / ew_std
+            zscored[valid] = (clipped - cw_mean) / ew_std
             results.append(zscored)
 
         df[col] = pd.concat(results)
@@ -854,8 +1020,18 @@ def main():
         return
 
     compute_only = '--compute-only' in sys.argv
+    from_db = '--from-db' in sys.argv
 
-    if not compute_only:
+    # Parse --universe flag
+    universe = 'russell3000'
+    for i, arg in enumerate(sys.argv):
+        if arg == '--universe' and i + 1 < len(sys.argv):
+            universe = sys.argv[i + 1]
+
+    if from_db:
+        print(f"\nFROM-DB MODE: Loading data from SQLite (universe: {universe})...")
+        all_stock_data, failed, rf_daily = load_from_db(universe)
+    elif not compute_only:
         print("\nLoading Russell constituents...")
         russell_df = pd.read_csv('data/input/russell_constituents.csv', sep=';')
         tickers = russell_df['Ticker'].tolist()

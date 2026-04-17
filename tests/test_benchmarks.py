@@ -22,44 +22,40 @@ class TestSPYFactorExplanation:
         explain the vast majority of its variance. If R² is low, something
         is wrong with the factor model.
 
-        Note: The factor model labels returns 1 business day ahead of
-        yfinance's convention (factor date T = yfinance date T-1), so we
-        shift factor returns back by 1 business day before aligning.
+        Uses EODHD for SPY prices — no date shift needed (EODHD dates
+        align directly with factor model dates, unlike yfinance which
+        had a T-1 offset).
         """
+        import sys, os as _os
+        sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', 'scripts'))
         try:
-            import yfinance as yf
-        except ImportError:
-            pytest.skip("yfinance not installed")
+            from dotenv import load_dotenv
+            load_dotenv()
+            from data_sources import EODHDSource
+            src = EODHDSource()
+        except Exception:
+            pytest.skip("EODHD not configured")
 
-        # Download SPY returns for the same date range as factor returns
-        start = factor_returns_df.index.min()
-        end = factor_returns_df.index.max()
-        spy = yf.download("SPY", start=start, end=end, progress=False)
+        start = str(factor_returns_df.index.min())[:10]
+        end = str(factor_returns_df.index.max())[:10]
+        spy_df = src.fetch_daily_prices(["SPY"], start, end)
 
-        if spy.empty or len(spy) < 20:
-            pytest.skip("Could not download SPY data")
+        if spy_df.empty or len(spy_df) < 20:
+            pytest.skip("Could not fetch SPY data from EODHD")
 
-        # Handle multi-level columns from yfinance
-        if isinstance(spy.columns, pd.MultiIndex):
-            spy.columns = spy.columns.get_level_values(0)
+        spy_df = spy_df.sort_values("date")
+        prices = spy_df.set_index("date")["close"]
+        prices.index = pd.to_datetime(prices.index).strftime("%Y-%m-%d")
+        spy_ret = np.log(prices / prices.shift(1)).dropna()
 
-        spy_ret = spy["Close"].pct_change().dropna()
-        spy_ret.index = spy_ret.index.tz_localize(None)
-
-        # Shift factor returns back 1 business day to align with yfinance
-        fr_aligned = factor_returns_df.copy()
-        fr_aligned.index = fr_aligned.index.shift(-1, freq="B")
-
-        # Align dates
-        common = fr_aligned.index.intersection(spy_ret.index)
+        # Align dates directly (no shift)
+        common = sorted(set(spy_ret.index) & set(factor_returns_df.index))
         if len(common) < 20:
             pytest.skip(f"Only {len(common)} overlapping dates")
 
-        y = spy_ret.loc[common].values
-        X = fr_aligned.loc[common].values
+        y = spy_ret.reindex(common).values
+        X = factor_returns_df.reindex(common).values
 
-        # OLS regression: y = X @ beta + epsilon
-        # R² = 1 - SS_res / SS_tot
         X_with_const = np.column_stack([np.ones(len(y)), X])
         beta, residuals, _, _ = np.linalg.lstsq(X_with_const, y, rcond=None)
 

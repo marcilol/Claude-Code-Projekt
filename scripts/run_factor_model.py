@@ -204,16 +204,18 @@ def vol_regime_adj(cov_list, factor_ret, tao=42):
     - tao: Half-life for exponential weighting
     """
     T = len(cov_list)
-    K = cov_list[-1].shape[0] if len(cov_list[-1]) > 0 else 0
+    # Find K from the first non-empty matrix
+    K = 0
+    for c in cov_list:
+        if isinstance(c, pd.DataFrame) and c.shape[0] > 0:
+            K = c.shape[0]
+            break
 
     # Extract factor variances over time
-    factor_var = []
+    factor_var = np.full((T, K), np.nan)
     for t in range(T):
-        if len(cov_list[t]) > 0:
-            factor_var.append(np.diag(cov_list[t].values))
-        else:
-            factor_var.append(np.full(K, np.nan))
-    factor_var = np.array(factor_var)
+        if isinstance(cov_list[t], pd.DataFrame) and cov_list[t].shape[0] == K:
+            factor_var[t] = np.diag(cov_list[t].values)
 
     # Cross-sectional bias statistic
     with np.errstate(divide='ignore', invalid='ignore'):
@@ -313,6 +315,7 @@ class BarraModel:
                 r2_values.append(np.nan)
 
         self.factor_ret = pd.DataFrame(factor_returns, columns=factor_names, index=self.dates)
+        self.factor_ret.replace([np.inf, -np.inf], np.nan, inplace=True)
         self.R2 = pd.DataFrame(r2_values, columns=['R2'], index=self.dates)
         self.specific_ret = specific_returns
 
@@ -335,7 +338,8 @@ class BarraModel:
                 print(f"  Processing period {t}/{self.T}", flush=True)
 
             try:
-                cov = Newey_West(self.factor_ret.iloc[:t], q=q, tao=tao)
+                ret_slice = self.factor_ret.iloc[:t].dropna(how='any')
+                cov = Newey_West(ret_slice, q=q, tao=tao)
                 nw_cov.append(cov)
             except Exception as e:
                 nw_cov.append(pd.DataFrame())
@@ -411,8 +415,16 @@ def main():
     print("\nLoading data...")
     data = pd.read_csv('data/model/russell3000_cross_sectional_data.csv')
 
-    # Handle NaN values
+    # Handle NaN values — drop rows where key factors are missing rather than
+    # zero-filling, which would treat missing-beta stocks as "market neutral".
+    # Factors that depend on warmup (beta, momentum) get NaN early in the panel.
     style_cols = ['size', 'beta', 'momentum', 'residvol', 'nlsize', 'btop', 'liquidity', 'earnyild', 'growth', 'leverage']
+    pre_drop = len(data)
+    data = data.dropna(subset=['beta', 'momentum', 'size'])
+    post_drop = len(data)
+    dropped_pct = 100 * (pre_drop - post_drop) / pre_drop
+    print(f"  Dropped {pre_drop - post_drop} rows ({dropped_pct:.1f}%) with missing beta/momentum/size")
+    # Remaining NaN in other style factors: fill with 0 (cross-sectional mean)
     for col in style_cols:
         data[col] = data[col].fillna(0)
     data = data.dropna(subset=['ret', 'capital'])
@@ -461,6 +473,12 @@ def main():
     # Final covariance matrix (style factors only)
     print("\nFactor Correlation Matrix (style factors):")
     final_cov = model.get_final_covariance()
+    if not isinstance(final_cov, pd.DataFrame) or final_cov.empty:
+        # Fallback: use Newey-West if vol-regime lost labels
+        final_cov = model.Newey_West_cov[-1]
+    if not hasattr(final_cov, 'columns') or style_cols[0] not in final_cov.columns:
+        factor_names = ['Country'] + model.industry_cols + model.style_cols
+        final_cov = pd.DataFrame(final_cov, columns=factor_names, index=factor_names)
     style_cov = final_cov.loc[style_cols, style_cols]
     style_std = np.sqrt(np.diag(style_cov))
     style_corr = style_cov / np.outer(style_std, style_std)

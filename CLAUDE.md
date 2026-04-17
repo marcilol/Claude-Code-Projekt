@@ -8,14 +8,21 @@ Python tool for factor-based portfolio risk analysis using MSCI Barra-style cros
 2. **Factor-Neutral Optimization** - Minimize factor exposure while staying close to original weights
 3. **Alpha Sizing** - Convert expected returns into optimal position sizes with backtesting
 4. **Factor Risk Management** - MCFR analysis, risk limits, and trade suggestions (Chapter 7)
-5. **Verification & Testing** - 67 automated tests validating model math and outputs
+5. **Verification & Testing** - 78 automated tests validating model math, outputs, and alignment
 
 ## Key Commands
 
 ```bash
-# Step 1: Fetch historical data (run once, takes ~60 min)
-python scripts/fetch_data.py
-python scripts/fetch_data.py --compute-only   # recompute factors from cached raw data
+# Step 0: Database management (incremental data updates, all via EODHD)
+python scripts/update_data.py init --universe russell3000 --source eodhd  # load from RUI+RUT union
+python scripts/update_data.py classify --universe russell3000 --source eodhd  # GICS industry groups
+python scripts/update_data.py prices --universe russell3000 --source eodhd  # incremental price fetch
+python scripts/update_data.py fundamentals --universe russell3000 --source eodhd
+python scripts/update_data.py estimates --universe russell3000 --source eodhd
+python scripts/update_data.py status                        # show DB coverage
+
+# Step 1: Compute factor exposures from DB
+python scripts/fetch_data.py --from-db        # compute from SQLite database
 
 # Step 2: Run Barra factor model
 python scripts/run_factor_model.py
@@ -49,7 +56,10 @@ portfolio-xray/
 ├── CLAUDE.md
 ├── requirements.txt
 ├── scripts/
-│   ├── fetch_data.py              # Fetches 2y data + computes factors (--compute-only)
+│   ├── data_manager.py            # MarketDB: SQLite database manager
+│   ├── data_sources.py            # Pluggable API adapters (yfinance, EODHD stub, FMP stub)
+│   ├── update_data.py             # CLI for DB init, incremental fetch, migration
+│   ├── fetch_data.py              # Fetches 2y data + computes factors (--from-db)
 │   ├── run_factor_model.py        # Runs Barra cross-sectional regression
 │   ├── analyze_portfolio.py       # Portfolio risk decomposition
 │   ├── optimize_portfolio.py      # Factor-neutral weight optimization
@@ -70,6 +80,8 @@ portfolio-xray/
 │   ├── baselines/                 # Saved model outputs for regression tests
 │   └── TEST_REPORT.md             # Detailed test descriptions and results
 ├── data/
+│   ├── db/                            # SQLite database (gitignored)
+│   │   └── market_data.db             # Persistent market data store
 │   ├── input/
 │   │   ├── russell_constituents.csv  # Russell 3000 tickers + sectors
 │   │   └── portfolios/               # Portfolio CSV files
@@ -108,7 +120,7 @@ WLS regression with √(market cap) weights. R² averages ~28% cross-sectionally
 
 ### 22 Factors
 
-**1 Market (Country)** + **11 GICS Industry sectors** + **10 CNE5-style Style factors:**
+**1 Market (Country)** + **25 GICS Industry Groups** + **10 Barra-style Style factors:**
 
 | Factor | Calculation | Interpretation |
 |--------|-------------|----------------|
@@ -166,26 +178,37 @@ Positive MCFR = position adds to factor risk. Negative = hedges it.
 
 ## Verification & Testing
 
-67 automated tests across 4 phases. Run with `pytest tests/ -v`. See `tests/TEST_REPORT.md` for full details.
+78 automated tests across 5 phases. Run with `pytest tests/ -v`.
 
 | Phase | Tests | What it validates |
 |-------|-------|-------------------|
-| 1. Sanity Checks | 11 | Model output CSVs: z-score conventions, no NaN, R² range 2–95%, covariance positive definite, 22 factor names consistent across files |
-| 2. Unit Tests | 34 | Core math against hand-calculated answers: z-scoring, factor variance (b'Ωb), MCFR, all 4 sizing methods, idiosyncratic volatility, portfolio loading |
-| 3. Regression | 4 | Current outputs vs saved baselines within 1% tolerance (catches unintended drift after code changes) |
-| 4. Benchmarks | 7 | SPY returns regressed on factor returns (R² = 99.1%), beta-market correlation, covariance symmetry, low autocorrelation |
+| 1. Sanity Checks | 11 | Model output CSVs: z-score conventions, no NaN, R² range, covariance positive definite, 36 factor names consistent |
+| 2. Unit Tests | 34 | Core math: z-scoring, factor variance (b'Ωb), MCFR, all 4 sizing methods, idiosyncratic volatility, portfolio loading |
+| 3. Regression | 4 | Current outputs vs saved baselines within 1% tolerance |
+| 4. Benchmarks | 6 | SPY regression via EODHD, beta-market correlation, covariance symmetry, autocorrelation |
+| 5. Model Validation | 12 | Autocorrelation, VIF, CAPM lift, R² distribution, known stock loadings, high-vol alignment, permutation floor, beta audit, R² decomposition |
 
-**Key validation:** The factor model explains 99.1% of SPY's daily return variance (Country factor β = 1.04, industry coefficients match S&P 500 sector weights). Residual vol is only 2% annualized vs SPY's 20% total vol.
+**Key validation:** SPY R² = 99.2% (Country β = 1.03). ETF factor loadings validated across 20 ETFs (style + sector). Permutation test confirms 20.2pp of R² is day-specific (structural floor = 7.3%). High-vol day alignment test shows R² collapses from 71.5% → 17.3% when dates are shifted on election day.
 
-## Known Quirks
-- **Date convention:** Factor model labels returns 1 business day ahead of yfinance. Factor date T = yfinance date T−1. The returns themselves are correct (0.99 correlation after alignment). Any code joining factor dates with external price data must shift by 1 day.
+## Data Quality Filters (applied in fetch_data.py)
+- **Zero/negative prices** filtered out before return computation
+- **Daily log returns** capped at ±25% to prevent -inf from zero-close days
+- **Stale data** skipped: stock-date excluded if latest price >5 calendar days behind model date
+- **Penny stocks** excluded: median close < $1 over last 60 trading days
+- **Winsorization order**: raw values winsorized at ±3.5σ BEFORE z-scoring (prevents outlier-driven std inflation)
+- **Beta/momentum/size NaN**: rows dropped from regression (not zero-filled)
+
+## Known Quirks & Limitations
+- **No date shift with EODHD**: EODHD dates align directly with the factor model (unlike the old yfinance setup which had a T-1 offset).
+- **Survivorship bias in universe membership**: Historical regressions use today's Russell 3000 (from EODHD RUI+RUT), not point-in-time membership. EODHD does not provide historical index constituents for Russell indices. Mitigated by stale-data filter (stocks naturally drop out after delisting).
+- **Partial factors**: Earnings Yield missing EPFWD (68% of Barra weight), Growth missing EGRLF/EGRSF (29%) — forward estimates exist as single snapshot only.
 - **Factor covariance is in DAILY units** — multiply by 252 to annualize variance.
 - **Idiosyncratic variance is already annualized:** (std × √252)².
-- **Beta warmup:** Beta needs ~252 days of prior data. The first ~30% of dates in the dataset have beta z-scores of 0.
+- **Beta warmup:** Beta needs ~60 days of prior data (EWM halflife=63). With 4-year price history, all stocks have beta by the model start date.
 - **Partial factors:** Earnings Yield missing EPFWD (68% of CNE5 weight), Growth missing EGRLF/EGRSF (29% of weight) — would require a paid data API (~$20/month via Financial Modeling Prep).
 
 ## Data Sources
-- **Stock prices/fundamentals**: Yahoo Finance (`yfinance`)
-- **Russell 3000 constituents**: `data/input/russell_constituents.csv`
-- **Sample period**: Feb 2025 – Jan 2026, 244 trading days, ~2,541 stocks/day
-- **Raw data cache**: `data/model/russell3000_raw_data.pkl` (80 MB)
+- **All market data**: EODHD ($99/mo All-World plan) — prices, fundamentals, estimates, classifications
+- **Russell 3000 constituents**: EODHD RUI.INDX + RUT.INDX union (2,942 tickers)
+- **Sample period**: Apr 2022 – Apr 2026, 504 trading days (after warmup), ~2,600 stocks/date
+- **Database**: `data/db/market_data.db` (SQLite, ~251 MB)

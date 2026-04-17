@@ -11,6 +11,10 @@ scripts/export_raw_inputs_excel.py
 scripts/export_universe_excel.py
 
 
+# Market data database
+data/db/
+.env
+
 # Python
 __pycache__/
 *.pyc
@@ -25,3 +29,4 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+data/temp/

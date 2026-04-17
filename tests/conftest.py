@@ -99,10 +99,25 @@ STYLE_FACTORS = [
     "btop", "liquidity", "earnyild", "growth", "leverage",
 ]
 
-INDUSTRY_FACTORS = [
-    "Communication", "Consumer Discretionary", "Consumer Staples",
-    "Energy", "Financials", "Health Care", "Industrials",
-    "Information Technology", "Materials", "Real Estate", "Utilities",
+INDUSTRY_FACTORS_25 = [
+    "Automobiles & Components", "Banks", "Capital Goods",
+    "Commercial & Professional Services",
+    "Consumer Discretionary Distribution & Retail",
+    "Consumer Durables & Apparel", "Consumer Services",
+    "Consumer Staples Distribution & Retail", "Energy",
+    "Equity Real Estate Investment Trusts (REITs)",
+    "Financial Services", "Food, Beverage & Tobacco",
+    "Health Care Equipment & Services", "Household & Personal Products",
+    "Insurance", "Materials", "Media & Entertainment",
+    "Pharmaceuticals, Biotechnology & Life Sciences",
+    "Real Estate Management & Development",
+    "Semiconductors & Semiconductor Equipment", "Software & Services",
+    "Technology Hardware & Equipment", "Telecommunication Services",
+    "Transportation", "Utilities",
 ]
 
-ALL_FACTORS = ["Country"] + INDUSTRY_FACTORS + STYLE_FACTORS
+# Legacy alias for old tests
+INDUSTRY_FACTORS = INDUSTRY_FACTORS_25
+
+ALL_FACTORS = ["Country"] + INDUSTRY_FACTORS_25 + STYLE_FACTORS
+N_FACTORS = len(ALL_FACTORS)  # 36
