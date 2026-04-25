@@ -9,9 +9,9 @@ Decomposes portfolio risk into:
 Uses the estimated factor covariance matrix from run_barra_model.py
 """
 
+import os
 import pandas as pd
 import numpy as np
-import yfinance as yf
 import sys
 import warnings
 warnings.filterwarnings('ignore')
@@ -19,12 +19,17 @@ warnings.filterwarnings('ignore')
 
 def load_portfolio(filepath):
     """Load portfolio from CSV file"""
-    # Detect delimiter
+    # Read lines, skipping git merge conflict markers
     with open(filepath, 'r') as f:
-        first_line = f.readline()
+        lines = [line for line in f
+                 if not line.startswith(('<<<<<<<', '=======', '>>>>>>>'))]
+
+    first_line = lines[0] if lines else ''
     delimiter = ';' if ';' in first_line else ','
 
-    df = pd.read_csv(filepath, sep=delimiter)
+    from io import StringIO
+    df = pd.read_csv(StringIO(''.join(lines)), sep=delimiter)
+    df = df.drop_duplicates()
 
     # Normalize column names
     df.columns = df.columns.str.lower().str.strip()
@@ -38,23 +43,30 @@ def load_portfolio(filepath):
 
     df = df.rename(columns={ticker_col: 'ticker', shares_col: 'shares'})
 
+    # Drop rows where ticker is a header repeat or non-string
+    df = df[df['ticker'].apply(lambda x: isinstance(x, str) and x.lower() != 'ticker')]
+    df['shares'] = pd.to_numeric(df['shares'], errors='coerce')
+    df = df.dropna(subset=['shares'])
+
     return df[['ticker', 'shares']]
 
 
 def get_portfolio_weights(portfolio_df):
-    """Calculate portfolio weights based on current market values"""
+    """Calculate portfolio weights based on current market values from DB"""
+    import sqlite3
+    db_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'db', 'market_data.db')
+    conn = sqlite3.connect(db_path)
+
     tickers = portfolio_df['ticker'].tolist()
     shares = portfolio_df['shares'].tolist()
 
     prices = {}
     for ticker in tickers:
-        try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
-            price = info.get('currentPrice', info.get('regularMarketPrice', np.nan))
-            prices[ticker] = price
-        except:
-            prices[ticker] = np.nan
+        row = conn.execute(
+            'SELECT close FROM daily_prices WHERE ticker=? ORDER BY date DESC LIMIT 1',
+            (ticker,)).fetchone()
+        prices[ticker] = row[0] if row else np.nan
+    conn.close()
 
     # Calculate market values
     market_values = []

@@ -11,6 +11,7 @@ Key methodology:
 5. Volatility Regime Adjustment (halflife=42)
 """
 
+import sys
 import pandas as pd
 import numpy as np
 from functools import reduce
@@ -406,14 +407,21 @@ class BarraModel:
 
 
 def main():
+    # Parse --universe flag
+    universe = 'russell3000'
+    for i, arg in enumerate(sys.argv[1:], 1):
+        if arg == '--universe' and i + 1 <= len(sys.argv) - 1:
+            universe = sys.argv[i + 1]
+
     print("=" * 70)
-    print("BARRA MULTI-FACTOR MODEL - Russell 3000")
+    print(f"BARRA MULTI-FACTOR MODEL - {universe}")
     print("Following MSCI Best Practices")
     print("=" * 70)
 
     # Load data
     print("\nLoading data...")
-    data = pd.read_csv('data/model/russell3000_cross_sectional_data.csv')
+    cs_path = f'data/model/{universe}_cross_sectional_data.csv'
+    data = pd.read_csv(cs_path)
 
     # Handle NaN values — drop rows where key factors are missing rather than
     # zero-filling, which would treat missing-beta stocks as "market neutral".
@@ -492,17 +500,18 @@ def main():
     print("SAVING RESULTS")
     print("=" * 70)
 
-    model.factor_ret.to_csv('data/model/barra_factor_returns.csv')
-    print("  Saved: data/model/barra_factor_returns.csv")
+    prefix = f'data/model/{universe}_' if universe != 'russell3000' else 'data/model/barra_'
+    model.factor_ret.to_csv(f'{prefix}factor_returns.csv')
+    print(f"  Saved: {prefix}factor_returns.csv")
 
-    final_cov.to_csv('data/model/barra_factor_covariance.csv')
-    print("  Saved: data/model/barra_factor_covariance.csv")
+    final_cov.to_csv(f'{prefix}factor_covariance.csv')
+    print(f"  Saved: {prefix}factor_covariance.csv")
 
-    stats.to_csv('data/model/barra_factor_statistics.csv')
-    print("  Saved: data/model/barra_factor_statistics.csv")
+    stats.to_csv(f'{prefix}factor_statistics.csv')
+    print(f"  Saved: {prefix}factor_statistics.csv")
 
-    model.R2.to_csv('data/model/barra_r2.csv')
-    print("  Saved: data/model/barra_r2.csv")
+    model.R2.to_csv(f'{prefix}r2.csv')
+    print(f"  Saved: {prefix}r2.csv")
 
     print("\n" + "=" * 70)
     print("COMPLETED")

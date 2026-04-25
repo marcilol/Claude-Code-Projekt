@@ -214,8 +214,9 @@ def cmd_init(args):
 def cmd_prices(args):
     """Fetch/update daily prices."""
     db = MarketDB()
-    source = get_source(args.source)
     universe = args.universe
+    exchange = db.get_universe_exchange(universe)
+    source = get_source(args.source, exchange=exchange)
 
     tickers_sectors = db.get_universe_tickers(universe)
     if not tickers_sectors:
@@ -297,8 +298,8 @@ def cmd_prices(args):
             failed += 1
             db.log_fetch(ticker, 'prices', source.name, None, 0, status='failed')
 
-        if (i + 1) % 10 == 0:
-            time.sleep(0.5)  # Rate limiting
+        if (i + 1) % 50 == 0:
+            time.sleep(0.2)  # Light rate limiting
 
     elapsed = time.time() - start_time
     print(f"\nDone in {elapsed/60:.1f} min: {updated} updated, {skipped} skipped, {failed} failed")
@@ -308,8 +309,9 @@ def cmd_prices(args):
 def cmd_fundamentals(args):
     """Fetch/update quarterly and annual fundamentals."""
     db = MarketDB()
-    source = get_source(args.source)
     universe = args.universe
+    exchange = db.get_universe_exchange(universe)
+    source = get_source(args.source, exchange=exchange)
 
     tickers_sectors = db.get_universe_tickers(universe)
     if not tickers_sectors:
@@ -370,13 +372,14 @@ def cmd_fundamentals(args):
 
 def cmd_estimates(args):
     """Fetch analyst estimates (requires paid API)."""
+    db = MarketDB()
+    exchange = db.get_universe_exchange(args.universe)
     try:
-        source = get_source(args.source)
+        source = get_source(args.source, exchange=exchange)
     except ValueError as e:
         print(f"ERROR: {e}")
         sys.exit(1)
 
-    db = MarketDB()
     tickers_sectors = db.get_universe_tickers(args.universe)
     if not tickers_sectors:
         print(f"ERROR: No tickers found for universe '{args.universe}'.")
@@ -401,7 +404,10 @@ def cmd_estimates(args):
 
 def cmd_classify(args):
     """Fetch GICS classification (sector, group) from EODHD and store in stocks table."""
-    source = get_source(args.source)
+    db_tmp = MarketDB()
+    exchange = db_tmp.get_universe_exchange(args.universe)
+    db_tmp.close()
+    source = get_source(args.source, exchange=exchange)
     if not hasattr(source, 'fetch_classifications'):
         print(f"ERROR: Source '{args.source}' does not support GICS classification fetching.")
         sys.exit(1)

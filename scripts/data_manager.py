@@ -237,20 +237,27 @@ class MarketDB:
         self.conn.commit()
 
     def get_universe_tickers(self, universe_name, include_removed=False):
-        """Return list of tickers in a universe as (ticker, sector, gic_group).
+        """Return list of tickers in a universe as (ticker, sector, gic_group, gic_sector).
 
         If include_removed=True, also returns tickers that were removed from the
         universe (for survivorship-bias-free factor model estimation).
         """
         where = "WHERE u.name = ?" if include_removed else "WHERE u.name = ? AND s.removed_date IS NULL"
         rows = self.conn.execute(f"""
-            SELECT s.ticker, s.sector, s.gic_group
+            SELECT s.ticker, s.sector, s.gic_group, s.gic_sector
             FROM stocks s
             JOIN universes u ON s.universe_id = u.id
             {where}
             ORDER BY s.ticker
         """, (universe_name,)).fetchall()
-        return [(r[0], r[1], r[2]) for r in rows]
+        return [(r[0], r[1], r[2], r[3]) for r in rows]
+
+    def get_universe_exchange(self, universe_name):
+        """Return the exchange code for a universe (e.g., 'US', 'LSE')."""
+        row = self.conn.execute(
+            "SELECT exchange FROM universes WHERE name=?", (universe_name,)
+        ).fetchone()
+        return row[0] if row else 'US'
 
     def list_universes(self):
         """Return DataFrame of universes with stock counts."""

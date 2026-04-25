@@ -20,11 +20,17 @@ warnings.filterwarnings('ignore')
 
 def load_portfolio(filepath):
     """Load portfolio from CSV file"""
+    # Read lines, skipping git merge conflict markers
     with open(filepath, 'r') as f:
-        first_line = f.readline()
+        lines = [line for line in f
+                 if not line.startswith(('<<<<<<<', '=======', '>>>>>>>'))]
+
+    first_line = lines[0] if lines else ''
     delimiter = ';' if ';' in first_line else ','
 
-    df = pd.read_csv(filepath, sep=delimiter)
+    from io import StringIO
+    df = pd.read_csv(StringIO(''.join(lines)), sep=delimiter)
+    df = df.drop_duplicates()
     df.columns = df.columns.str.lower().str.strip()
 
     ticker_col = next((c for c in df.columns if 'ticker' in c.lower()), None)

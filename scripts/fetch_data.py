@@ -37,10 +37,13 @@ STYLE_FACTORS = ['size', 'beta', 'momentum', 'residvol', 'nlsize', 'btop',
                  'liquidity', 'earnyild', 'growth', 'leverage']
 
 
-def load_from_db(universe='russell3000'):
+def load_from_db(universe='russell3000', use_sectors=False):
     """
     Load stock data from SQLite database, returning the same format
     as load_raw_data() so the computation pipeline works unchanged.
+
+    If use_sectors=True, uses 11 GICS sectors instead of 25 GICS groups
+    for industry classification.
 
     Returns: (all_stock_data, failed, rf_daily)
     """
@@ -53,10 +56,25 @@ def load_from_db(universe='russell3000'):
                          f"Run: python scripts/update_data.py init --universe {universe}")
 
     tickers = [t[0] for t in tickers_sectors]
-    # Prefer gic_group (25 GICS Groups) over sector (11 GICS Sectors) when available
-    sectors_map = {t[0]: (t[2] or t[1]) for t in tickers_sectors}
+    if use_sectors:
+        # Use gic_sector (11 GICS Sectors) — fallback to sector column
+        sectors_map = {t[0]: (t[3] or t[1]) for t in tickers_sectors}
+        print(f"  Using 11 GICS sectors for industry classification")
+    else:
+        # Prefer gic_group (25 GICS Groups) — fallback to gic_sector, then sector
+        sectors_map = {t[0]: (t[2] or t[3] or t[1]) for t in tickers_sectors}
 
-    print(f"  Loading from database: {len(tickers)} tickers in '{universe}'")
+    # Currency-aware thresholds for penny stock and volume filters
+    currency = db.get_universe_exchange(universe)  # returns exchange code
+    currency_info = db.conn.execute(
+        "SELECT currency FROM universes WHERE name=?", (universe,)).fetchone()
+    curr = currency_info[0] if currency_info else 'USD'
+    # LSE prices are in pence (1/100 of GBP)
+    penny_threshold = 100.0 if curr == 'GBP' else 1.0
+    min_avg_volume = 50000  # minimum average daily volume
+
+    print(f"  Loading from database: {len(tickers)} tickers in '{universe}'"
+          f" (currency={curr}, penny_threshold={penny_threshold}, min_vol={min_avg_volume})")
 
     # Load all prices
     prices_df = db.get_daily_prices(tickers)
@@ -104,9 +122,15 @@ def load_from_db(universe='russell3000'):
             failed.append(ticker)
             continue
 
-        # Skip penny stocks: median close < $1 over last 60 days
+        # Skip penny stocks: currency-aware threshold
         recent_close = pdf['close'].tail(60)
-        if recent_close.median() < 1.0:
+        if recent_close.median() < penny_threshold:
+            failed.append(ticker)
+            continue
+
+        # Skip illiquid stocks: average volume over last 60 days
+        recent_vol = pdf['volume'].tail(60)
+        if recent_vol.mean() < min_avg_volume:
             failed.append(ticker)
             continue
 
@@ -1021,6 +1045,7 @@ def main():
 
     compute_only = '--compute-only' in sys.argv
     from_db = '--from-db' in sys.argv
+    use_sectors = '--sectors' in sys.argv
 
     # Parse --universe flag
     universe = 'russell3000'
@@ -1030,7 +1055,7 @@ def main():
 
     if from_db:
         print(f"\nFROM-DB MODE: Loading data from SQLite (universe: {universe})...")
-        all_stock_data, failed, rf_daily = load_from_db(universe)
+        all_stock_data, failed, rf_daily = load_from_db(universe, use_sectors=use_sectors)
     elif not compute_only:
         print("\nLoading Russell constituents...")
         russell_df = pd.read_csv('data/input/russell_constituents.csv', sep=';')
@@ -1061,10 +1086,19 @@ def main():
     print("PHASE 2: COMPUTING CNE5 DESCRIPTORS")
     print("=" * 70)
 
-    df, dates = create_cross_sectional_dataset(all_stock_data, rf_daily, target_days=504)
+    # Request extra 80 dates beyond target for beta/HSIGMA warmup (EWM needs ~60)
+    BETA_WARMUP = 80
+    df, dates_extended = create_cross_sectional_dataset(
+        all_stock_data, rf_daily, target_days=504 + BETA_WARMUP)
 
-    # Phase 2b: Beta + HSIGMA
+    # Phase 2b: Beta + HSIGMA (computed on extended panel so warmup is available)
     df = add_beta_and_hsigma(df)
+
+    # Trim warmup dates — keep only the last 504
+    dates_to_keep = sorted(df['date'].unique())[-504:]
+    df = df[df['date'].isin(dates_to_keep)]
+    dates_extended = dates_to_keep
+    print(f"  Trimmed beta warmup: {len(dates_to_keep)} dates retained")
 
     # Phase 2c: Composites from z-scored sub-descriptors
     df = compute_composites(df)
@@ -1096,8 +1130,9 @@ def main():
             'etop_raw', 'cetop_raw', 'egro_raw', 'sgro_raw', 'mlev_raw', 'dtoa_raw', 'blev_raw']
     save_cols.extend(subs)
     available = [c for c in save_cols if c in df.columns]
-    df[available].to_csv('data/model/russell3000_factor_exposures_historical.csv', index=False)
-    print(f"\nSaved factor exposures: data/model/russell3000_factor_exposures_historical.csv")
+    exp_path = f'data/model/{universe}_factor_exposures_historical.csv'
+    df[available].to_csv(exp_path, index=False)
+    print(f"\nSaved factor exposures: {exp_path}")
 
     # Phase 3: Barra format
     print("\n" + "=" * 70)
@@ -1105,8 +1140,9 @@ def main():
     print("=" * 70)
 
     barra_df, industry_cols, style_cols = create_barra_format(df.copy(), STYLE_FACTORS)
-    barra_df.to_csv('data/model/russell3000_cross_sectional_data.csv', index=False)
-    print(f"Saved: data/model/russell3000_cross_sectional_data.csv")
+    cs_path = f'data/model/{universe}_cross_sectional_data.csv'
+    barra_df.to_csv(cs_path, index=False)
+    print(f"Saved: {cs_path}")
     print(f"  Shape: {barra_df.shape}")
     print(f"  Dates: {barra_df['date'].nunique()}")
     print(f"  Stocks per date: ~{len(barra_df) // max(1, barra_df['date'].nunique())}")

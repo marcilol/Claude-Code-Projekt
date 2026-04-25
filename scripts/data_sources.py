@@ -89,7 +89,7 @@ class YFinanceSource(DataSource):
 
     name = 'yfinance'
 
-    def __init__(self, delay=0.5):
+    def __init__(self, delay=0.5, exchange=None):
         self.delay = delay
 
     def fetch_daily_prices(self, tickers, start, end, progress_fn=None):
@@ -324,16 +324,17 @@ class EODHDSource(DataSource):
 
             try:
                 sym = self._ticker_symbol(ticker)
-                # Shares outstanding (single snapshot per ticker).
+                # Prices first — skip SharesStats if no price data exists
+                data = self._get(f"eod/{sym}", {'from': start, 'to': end})
+                if not data:
+                    continue
+
+                # Shares outstanding only for tickers with price data
                 try:
                     shares_data = self._get(f"fundamentals/{sym}", {'filter': 'SharesStats'})
                     shares_out = _safe_num(shares_data.get('SharesOutstanding')) if shares_data else np.nan
                 except Exception:
                     shares_out = np.nan
-
-                data = self._get(f"eod/{sym}", {'from': start, 'to': end})
-                if not data:
-                    continue
 
                 for row in data:
                     all_rows.append({
