@@ -175,18 +175,21 @@ class TestKnownStockLoadings:
         return val if pd.notna(val) else None
 
     def test_aapl_positive_size(self, cross_sectional_data):
+        """Apple should load positive on size (it's a mega-cap)."""
         val = self._get_loading(cross_sectional_data, "AAPL", "size")
         if val is None:
             pytest.skip("AAPL not found")
         assert val > 0, f"AAPL size = {val}, expected positive (mega-cap)"
 
     def test_tsla_positive_beta(self, cross_sectional_data):
+        """Tesla should load positive on beta (it's a high-beta stock)."""
         val = self._get_loading(cross_sectional_data, "TSLA", "beta")
         if val is None:
             pytest.skip("TSLA not found")
         assert val > 0, f"TSLA beta = {val}, expected positive (high beta)"
 
     def test_nvda_positive_size(self, cross_sectional_data):
+        """NVIDIA should load positive on size (it's a mega-cap)."""
         val = self._get_loading(cross_sectional_data, "NVDA", "size")
         if val is None:
             pytest.skip("NVDA not found")
@@ -201,6 +204,7 @@ class TestHighVolDayAlignment:
     substantially reduce R²."""
 
     def test_alignment_on_volatile_days(self, cross_sectional_data):
+        """On high-dispersion days, shifting returns by 1 day should substantially drop R²."""
         dates = sorted(cross_sectional_data["date"].unique())
         industry_cols = [c for c in cross_sectional_data.columns
                          if c not in ["date", "stocknames", "capital", "ret"] + STYLE_FACTORS]
@@ -274,6 +278,7 @@ class TestPermutationFloor:
     """Shuffling date-return pairings should collapse R² well below baseline."""
 
     def test_permuted_r2_below_baseline(self, cross_sectional_data):
+        """Shuffling date-return pairings should drop R² well below baseline (>10pp lift)."""
         dates = sorted(cross_sectional_data["date"].unique())
         industry_cols = [c for c in cross_sectional_data.columns
                          if c not in ["date", "stocknames", "capital", "ret"] + STYLE_FACTORS]
@@ -393,4 +398,98 @@ class TestR2Decomposition:
         lift = np.mean(ind_r2s) - np.mean(capm_r2s)
         assert lift > 0.05, (
             f"Industry lift = {lift:.3f}. Expected > 0.05."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 10: Cap-weighted industry returns sum to zero
+# ---------------------------------------------------------------------------
+class TestIndustryNeutralityConstraint:
+    """The regression constrains cap-weighted industry returns to sum to zero
+    on each date. This ensures the Country factor captures the full market
+    return and industry returns are deviations from it."""
+
+    def test_capweighted_industry_returns_sum_to_zero(self, factor_returns, cross_sectional_data):
+        """Cap-weighted industry factor returns should sum to ~0 on each date."""
+        industry_cols = [c for c in cross_sectional_data.columns
+                         if c not in ["date", "stocknames", "capital", "ret"] + STYLE_FACTORS]
+        dates = sorted(cross_sectional_data["date"].unique())
+
+        violations = 0
+        for d in dates[::5]:
+            dd = cross_sectional_data[cross_sectional_data["date"] == d]
+            if d not in factor_returns.index:
+                continue
+
+            # Cap weights per industry
+            industry_caps = {}
+            for ind in industry_cols:
+                mask = dd[ind] == 1
+                if mask.any():
+                    industry_caps[ind] = dd.loc[mask, "capital"].sum()
+            total_cap = sum(industry_caps.values())
+            if total_cap == 0:
+                continue
+
+            # Cap-weighted sum of industry returns
+            cw_sum = 0
+            for ind, cap in industry_caps.items():
+                if ind in factor_returns.columns:
+                    cw_sum += (cap / total_cap) * factor_returns.loc[d, ind]
+
+            if abs(cw_sum) > 0.001:
+                violations += 1
+
+        assert violations == 0, (
+            f"{violations} dates where cap-weighted industry returns don't sum to ~0."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 11: Each stock belongs to exactly one industry
+# ---------------------------------------------------------------------------
+class TestIndustryExposureCompleteness:
+    """Every stock should have exactly one industry dummy = 1 on each date."""
+
+    def test_one_industry_per_stock(self, cross_sectional_data):
+        """Each row should sum to exactly 1 across industry dummies."""
+        industry_cols = [c for c in cross_sectional_data.columns
+                         if c not in ["date", "stocknames", "capital", "ret"] + STYLE_FACTORS]
+
+        row_sums = cross_sectional_data[industry_cols].sum(axis=1)
+        not_one = (row_sums != 1).sum()
+        assert not_one == 0, (
+            f"{not_one} rows don't have exactly one industry dummy = 1. "
+            f"Row sum distribution: {row_sums.value_counts().to_dict()}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 12: Country factor correlates with cap-weighted market return
+# ---------------------------------------------------------------------------
+class TestCountryFactorCorrelation:
+    """The Country factor should be highly correlated with the cap-weighted
+    universe return. If not, the industry neutrality constraint or the
+    regression itself may be broken."""
+
+    def test_country_correlates_with_market(self, factor_returns, cross_sectional_data):
+        """Correlation between Country factor and cap-weighted market return > 0.90."""
+        dates = sorted(cross_sectional_data["date"].unique())
+
+        market_returns = []
+        country_returns = []
+        for d in dates:
+            dd = cross_sectional_data[cross_sectional_data["date"] == d]
+            cap = dd["capital"].values
+            ret = dd["ret"].values
+            if cap.sum() == 0 or d not in factor_returns.index:
+                continue
+            w = cap / cap.sum()
+            market_returns.append(np.sum(w * ret))
+            country_returns.append(factor_returns.loc[d, "Country"])
+
+        corr = np.corrcoef(market_returns, country_returns)[0, 1]
+        assert corr > 0.90, (
+            f"Country–market correlation = {corr:.3f}. Expected > 0.90. "
+            f"The industry neutrality constraint may not be working."
         )
