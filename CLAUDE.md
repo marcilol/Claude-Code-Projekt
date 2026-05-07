@@ -8,7 +8,7 @@ Factor-based portfolio risk analysis using Barra-style cross-sectional regressio
 2. **Factor-Neutral Optimization** — minimize factor exposure while staying close to original weights
 3. **Alpha Sizing** — convert expected returns into optimal position sizes with backtesting
 4. **Factor Risk Management** — MCFR analysis, risk limits, and trade suggestions
-5. **Multi-Market Support** — US (Russell 3000), UK (LSE), Korea (KO), Eurozone (XETRA)
+5. **Multi-Market Support** — US (Russell 3000 + 20-yr S&P 500), UK (LSE), Korea (KO), Eurozone (XETRA), China (SHE), Taiwan (TW)
 6. **Verification** — 78 automated tests validating math, outputs, and alignment
 
 ## Data Source
@@ -24,18 +24,39 @@ All market data from **EODHD** ($99/mo All-World plan). No yfinance dependency.
 | `analyst_estimates` | Forward EPS, growth YoY (single snapshot) | (ticker, as_of_date) |
 | `risk_free_rate` | Daily 13-week T-bill rate | (date) |
 
-Database: `data/db/market_data.db` (SQLite, ~537 MB). Inspect with DB Browser for SQLite.
+Database: `data/db/market_data.db` (SQLite, ~1.9 GB). Inspect with DB Browser for SQLite.
 
 ## Universes
 
-| Universe | Active tickers | Exchange | Currency | Industry scheme |
-|---|---:|---|---|---|
-| `russell3000` | 2,942 | US | USD | 25 GICS Industry Groups |
-| `uk` | 1,319 | LSE | GBP | 11 GICS Sectors |
-| `korea` | 1,263 | KO | KRW | 11 GICS Sectors |
-| `eurozone` | 361 | XETRA | EUR | 11 GICS Sectors |
+| Universe | Tickers | Exchange | Currency | Industry scheme | Price coverage |
+|---|---:|---|---|---|---|
+| `russell3000` | 2,942 | US | USD | 25 GICS Industry Groups | ~4 yr |
+| `sp500_hist` | 947 | US | USD | 25 GICS Industry Groups | **20 yr, survivorship-bias-free** |
+| `uk` | 1,319 | LSE | GBP | 11 GICS Sectors | ~4 yr |
+| `korea` | 1,263 | KO | KRW | 11 GICS Sectors | ~4 yr |
+| `eurozone` | 361 | XETRA | EUR | 11 GICS Sectors | ~4 yr |
+| `china_she` | ~1,000 | SHE | CNY | 11 GICS Sectors (consolidated from EODHD `Industry`) | ~4 yr |
+| `taiwan_tw` | ~1,100 | TW | TWD | 11 GICS Sectors | ~4 yr |
 
-Non-US universes (UK, Korea, Eurozone) use 11-sector classification (`--sectors` flag) because EODHD's 25-group GICS classification has quality issues for non-US exchanges (misclassified cross-listings). A larger `us_common` universe (~12.5k tickers, expanded common-stock list built by `scripts/build_us_universe.py`) is loaded in the DB but not yet wired into the factor model.
+Non-US universes (UK, Korea, Eurozone, China, Taiwan) use 11-sector classification (`--sectors` flag) because EODHD's 25-group GICS classification has quality issues for non-US exchanges (misclassified cross-listings). A larger `us_common` universe (~12.5k tickers, expanded common-stock list built by `scripts/build_us_universe.py`) is loaded in the DB but not yet wired into the factor model — and is mostly *delisted-only* leftover (very few live names overlap with `russell3000`); the active arm of `build_us_universe.py` did not land cleanly. Use `sp500_hist` instead for survivorship-bias-free US analysis.
+
+### `sp500_hist` — survivorship-bias-free 20-yr panel
+
+Built by `scripts/build_sp500_historical.py` from the [fja05680/sp500](https://github.com/fja05680/sp500) GitHub repo (point-in-time S&P 500 constituent lists since 1996). Combines two CSVs:
+- Original CSV (1996-2019) — uses `-YYYYMM` suffixes for delisted entries; great for clean resolution.
+- Newer CSV (1996-2026) — bare tickers; used only for the post-2019 tail to backfill TSLA, META, ABNB, COIN, CRWD, PLTR, etc.
+
+Resolution to EODHD symbols handles three cases: (1) bare current ticker → EODHD active list; (2) `XYZ-YYYYMM` suffixed → tries `XYZ_old`, `XYZ_old1..5`, `XYZ-OLD` first (handles symbol reuse like BSC → BSC_old for Bear Stearns), then bare `XYZ` in delisted (e.g. LEH); (3) manual overrides for fja-vs-EODHD naming mismatches (`LEHMQ-201203 → LEH`, `MTLQQ-201103 → GM_old`, `ABKFQ-201304 → ABK`, `RSHCQ-201510 → RSH`, `RE → EG`, `ATGE → DV`, `FB → META`, `CDAY → DAY`).
+
+Includes 2008-crisis casualties (LEH, BSC_old, GM_old, WB_old1, ABK, AGN_old, XL_old, WCG, RSH) with verified end-of-life dates matching real history. Cache files: `data/db/_sp500_hist_resolved.json` (947 fja→eodhd mappings), `data/db/_sp500_hist_unresolved.json`, `data/db/_eodhd_us_active.json`, `data/db/_eodhd_us_delisted.json`. Source CSVs cached at `data/input/sp500_historical_components.csv` and `data/input/sp500_historical_components_2026.csv`.
+
+### Monthly variant (`sp500_hist_monthly`)
+
+`scripts/aggregate_panel_monthly.py --universe sp500_hist` rolls the daily panel up to month-end: keeps the last trading day of each calendar month for industry dummies and z-scored style exposures (slow-moving, end-of-month-snapshot is standard practice), compounds daily simple returns into the monthly return, and uses end-of-month market cap. Output: `data/model/sp500_hist_monthly_cross_sectional_data.csv`. The factor model can then run on it with `--frequency monthly` (annualization = ×12, NW halflife = 24 mo, vol-regime halflife = 6 mo).
+
+### `china_she` and `taiwan_tw`
+
+Built end-to-end by `scripts/build_china_taiwan.py` (resumable, three phases: ticker list + fundamentals → universe table → daily prices). SHE is filtered to top ~1,000 by market cap; Taiwan keeps all common-stock listings. Because EODHD reports a free-text `Industry` field rather than canonical 25-group GICS for non-US exchanges, run `scripts/consolidate_gics.py --universe china_she` (or `taiwan_tw`) before the factor model — this maps EODHD industries onto the 11-sector scheme.
 
 ## Pipeline
 
@@ -49,22 +70,57 @@ py scripts/update_data.py estimates --universe X --source eodhd  # analyst estim
 py scripts/update_data.py status                                 # coverage summary
 
 # Factor model
-py scripts/fetch_data.py --from-db --universe X [--sectors]      # compute factor exposures
-py scripts/run_factor_model.py --universe X                      # cross-sectional regression
+py scripts/fetch_data.py --from-db --universe X [--sectors] \
+    [--target-days 504] [--min-coverage 0.80]                  # compute factor exposures
+py scripts/run_factor_model.py --universe X [--frequency daily|monthly]  # cross-sectional regression
+
+# Monthly aggregation (for survivorship-bias-free long-horizon work)
+py scripts/aggregate_panel_monthly.py --universe sp500_hist
+py scripts/run_factor_model.py --universe sp500_hist_monthly --frequency monthly
 
 # Portfolio analysis (uses russell3000 / barra_* model by default; pass --universe for others)
 py scripts/analyze_portfolio.py data/input/portfolios/Own_Portfolio_dated.csv
 py scripts/optimize_portfolio.py data/input/portfolios/Own_Portfolio_dated.csv
 py scripts/size_positions.py data/input/portfolios/Own_Portfolio_dated.csv
 py scripts/manage_risk.py data/input/portfolios/Own_Portfolio_dated.csv
+py scripts/mcfr_matrix.py data/input/portfolios/Own_Portfolio_dated.csv  # joint stock×factor MCFR
+
+# Basket workflow (multi-portfolio in one CSV)
+py scripts/convert_baskets.py --scheme cap|equal|original --input <baskets.csv>
+py scripts/append_basket_coverage.py [--phase A|B]            # add missing tickers (e.g. JP cross-listings)
+py scripts/generate_basket_report.py                          # per-basket HTML report
 
 # Validation & EDA
 py scripts/explore_data.py                    # 16-check data quality report
 py scripts/validate_model.py                  # 8-check model validation
 py scripts/validate_alignment_v2.py           # permutation + decomposition tests
 py scripts/validate_etf_loadings.py           # 20 ETF factor loading regressions
+py scripts/validate_sp500_hist.py             # sp500_hist coverage + crisis spot-checks
+py scripts/validate_all_markets.py            # cross-market EDA (auto-publishes data/eda_latest/)
+py scripts/generate_market_report.py          # cross-market overview report
 pytest tests/ -v                              # 78 automated tests
 ```
+
+### Frequency-aware regression
+
+`run_factor_model.py --frequency` switches all annualization-dependent constants:
+
+| Constant | Daily | Monthly |
+|---|---:|---:|
+| Periods per year | 252 | 12 |
+| Newey-West halflife | 252 | 24 |
+| Volatility regime halflife | 42 | 6 |
+
+### `fetch_data.py` flags
+
+- `--target-days N` — number of dates retained after beta warmup is trimmed (default 504 ≈ 2 yr daily)
+- `--min-coverage F` — minimum fraction of universe with data on a date (default 0.80)
+- Sanity filter: rows with `close > 5000 × penny_threshold` are dropped to defend against EODHD symbol-reuse contamination on delisted US tickers (e.g. MEL.US, WFT) where the symbol got reassigned at $5k–$1M prices.
+- Core-factor NaN guard: rows missing `size`/`beta`/`momentum` are now **dropped** rather than zero-filled (zero-filling created phantom zero-exposure rows that biased the regression). Composite factors (residvol, liquidity, etc.) still get filled.
+
+### `update_data.py prices` extra flag
+
+- `--start-date YYYY-MM-DD` — forces full-range fetch from that date for every ticker, ignoring incremental logic. Useful for backfilling history when extending an existing universe (e.g. `sp500_hist` 20-yr backfill).
 
 ## Factor Model
 
@@ -133,12 +189,13 @@ py scripts/run_factor_model.py --universe X
 
 **What to share out-of-band (Google Drive / R2 / etc.):**
 - `data/db/market_data.db` — required, only file you must share
-- (Optional) the small annualized model outputs per market (`*_factor_covariance.csv`, `*_factor_returns.csv`, `*_factor_statistics.csv`, `*_r2.csv` — all <1 MB) so collaborators can run portfolio analysis without rebuilding the model.
+- (Optional) the small annualized model outputs per market (`*_factor_covariance.csv`, `*_factor_returns.csv`, `*_factor_statistics.csv`, `*_r2.csv` — all <5 MB; `sp500_hist_factor_returns.csv` is ~4 MB at 20-yr horizon) so collaborators can run portfolio analysis without rebuilding the model.
 
 **Do NOT share** (gitignored, reproducible from DB):
-- `*_cross_sectional_data.csv`, `*_factor_exposures_historical.csv` (~720 MB across 4 markets)
-- `data/eda/` (HTML reports, regenerable)
+- `*_cross_sectional_data.csv`, `*_factor_exposures_historical.csv` (multi-GB across markets; `sp500_hist` alone is ~3.2 GB)
+- `data/eda/` and `data/eda_latest/` (HTML reports + self-contained mirror, regenerable)
 - `data/model/russell3000_raw_data.pkl` (intermediate cache)
+- `Frontendreferences/` (design references, not for distribution)
 
 ## Portfolio CSV Format
 

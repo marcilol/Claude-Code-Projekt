@@ -230,13 +230,18 @@ def cmd_prices(args):
 
     # Determine date range
     years = getattr(args, 'years', 4)
-    if args.full:
+    explicit_start = getattr(args, 'start_date', None)
+    if explicit_start:
+        # Force-fetch [start_date, today] for every ticker; UPSERT dedups.
+        start = explicit_start
+    elif args.full:
         start = (datetime.now() - timedelta(days=365 * years + 30)).strftime('%Y-%m-%d')
     else:
         start = None  # will be set per-ticker
 
     end = datetime.now().strftime('%Y-%m-%d')
-    default_start = (datetime.now() - timedelta(days=365 * years + 30)).strftime('%Y-%m-%d')
+    default_start = (explicit_start
+                     or (datetime.now() - timedelta(days=365 * years + 30)).strftime('%Y-%m-%d'))
 
     updated = 0
     skipped = 0
@@ -269,7 +274,10 @@ def cmd_prices(args):
                   flush=True)
 
         # Determine start date for this ticker
-        if args.full:
+        if explicit_start:
+            # --start-date overrides incremental logic; always fetch full range
+            ticker_start = explicit_start
+        elif args.full:
             ticker_start = default_start
         else:
             last_date = db.get_last_price_date(ticker)
@@ -667,6 +675,9 @@ Examples:
                           help='Full re-fetch (ignore existing data)')
     p_prices.add_argument('--years', type=int, default=4,
                           help='Years of history for full fetch (default: 4)')
+    p_prices.add_argument('--start-date', dest='start_date', type=str, default=None,
+                          help='Explicit YYYY-MM-DD start; forces full-range fetch '
+                               'for every ticker (overrides incremental logic).')
 
     # fundamentals
     p_fund = subparsers.add_parser('fundamentals', help='Fetch/update fundamentals')

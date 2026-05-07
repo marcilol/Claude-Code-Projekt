@@ -118,6 +118,16 @@ def load_from_db(universe='russell3000', use_sectors=False):
 
         pdf = prices_grouped[ticker].sort_values('date')
 
+        # Sanity filter: drop individual rows with absurd close prices.
+        # EODHD's symbol-reuse contaminates some delisted US tickers (e.g. MEL.US,
+        # WFT, CIN, TEK_old) with $5k-$1M closes from a different company that
+        # took over the symbol. No real S&P 500 common stock trades >$5k
+        # (BRK.A excluded — sp500_hist uses BRK-B class). Filter is in *price
+        # currency units* (USD for sp500_hist, GBP-pence × penny_threshold for
+        # UK, etc.) — the same threshold-units as penny_threshold above.
+        absurd_close = 5000.0 * penny_threshold  # USD: $5k cap; LSE pence: 500k pence
+        pdf = pdf[(pdf['close'] > 0) & (pdf['close'] < absurd_close)]
+
         if len(pdf) < 252:
             failed.append(ticker)
             continue
@@ -849,7 +859,23 @@ def create_barra_format(df, style_cols):
     available_cols = [c for c in final_cols if c in df.columns]
     result = df[available_cols].copy()
 
-    for col in style_cols:
+    # Drop rows missing core (un-fillable) factors — these stocks lack enough
+    # history for a meaningful regression. Composite factors with zero
+    # sub-descriptors (residvol/liquidity/etc) can legitimately be 0, but
+    # missing beta/size/momentum should NOT be zero-filled (creates phantom
+    # zero-exposure rows that bias the cross-sectional regression).
+    core_required = [c for c in ('size', 'beta', 'momentum') if c in result.columns]
+    if core_required:
+        before = len(result)
+        result = result.dropna(subset=core_required)
+        dropped = before - len(result)
+        if dropped > 0:
+            print(f"  Dropped {dropped} rows with NaN in core factors {core_required}")
+
+    # Other style cols may legitimately have zeros (composites where some
+    # sub-descriptor is missing); fill those for the regression.
+    other_style_cols = [c for c in style_cols if c not in core_required]
+    for col in other_style_cols:
         if col in result.columns:
             result[col] = result[col].fillna(0)
 
@@ -1047,8 +1073,15 @@ def main():
     from_db = '--from-db' in sys.argv
     use_sectors = '--sectors' in sys.argv
 
-    # Parse --universe flag
+    # Parse --universe / --target-days / --min-coverage flags
     universe = 'russell3000'
+    target_days = 504    # default: ~2 years (matches russell3000 4-yr fetch + 2-yr regression window)
+    min_coverage = 0.80  # default: 80% of universe must have data on a date
+    for i, arg in enumerate(sys.argv):
+        if arg == '--target-days' and i + 1 < len(sys.argv):
+            target_days = int(sys.argv[i + 1])
+        elif arg == '--min-coverage' and i + 1 < len(sys.argv):
+            min_coverage = float(sys.argv[i + 1])
     for i, arg in enumerate(sys.argv):
         if arg == '--universe' and i + 1 < len(sys.argv):
             universe = sys.argv[i + 1]
@@ -1089,13 +1122,15 @@ def main():
     # Request extra 80 dates beyond target for beta/HSIGMA warmup (EWM needs ~60)
     BETA_WARMUP = 80
     df, dates_extended = create_cross_sectional_dataset(
-        all_stock_data, rf_daily, target_days=504 + BETA_WARMUP)
+        all_stock_data, rf_daily,
+        target_days=target_days + BETA_WARMUP,
+        min_coverage=min_coverage)
 
     # Phase 2b: Beta + HSIGMA (computed on extended panel so warmup is available)
     df = add_beta_and_hsigma(df)
 
-    # Trim warmup dates — keep only the last 504
-    dates_to_keep = sorted(df['date'].unique())[-504:]
+    # Trim warmup dates — keep only the last `target_days`
+    dates_to_keep = sorted(df['date'].unique())[-target_days:]
     df = df[df['date'].isin(dates_to_keep)]
     dates_extended = dates_to_keep
     print(f"  Trimmed beta warmup: {len(dates_to_keep)} dates retained")

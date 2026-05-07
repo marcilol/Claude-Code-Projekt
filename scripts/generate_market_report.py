@@ -70,6 +70,26 @@ MARKETS = {
         'universe_id': 5,
         'currency': 'EUR',
     },
+    'china_she': {
+        'cs_data': 'china_she_cross_sectional_data.csv',
+        'factor_returns': 'china_she_factor_returns.csv',
+        'factor_cov': 'china_she_factor_covariance.csv',
+        'factor_stats': 'china_she_factor_statistics.csv',
+        'r2': 'china_she_r2.csv',
+        'label': 'China (SHE — top 1000 by mcap)',
+        'universe_id': 6,
+        'currency': 'CNY',
+    },
+    'taiwan_tw': {
+        'cs_data': 'taiwan_tw_cross_sectional_data.csv',
+        'factor_returns': 'taiwan_tw_factor_returns.csv',
+        'factor_cov': 'taiwan_tw_factor_covariance.csv',
+        'factor_stats': 'taiwan_tw_factor_statistics.csv',
+        'r2': 'taiwan_tw_r2.csv',
+        'label': 'Taiwan (TW)',
+        'universe_id': 7,
+        'currency': 'TWD',
+    },
 }
 
 
@@ -765,7 +785,14 @@ def main():
         ax.axhline(0, color='k', lw=0.5)
         save_plot(fig, os.path.join(plots_dir, 'cross_market_country.png'))
 
+    publish_latest()
     print(f'\nDone.')
+
+
+def publish_latest():
+    """Mirror latest per-market reports as self-contained HTMLs in data/eda_latest/."""
+    from publish_latest_eda import publish
+    publish()
 
 
 if __name__ == '__main__':

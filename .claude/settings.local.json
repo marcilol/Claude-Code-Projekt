@@ -1,29 +1,33 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(python -m pip install:*)",
-      "Bash(python:*)",
-      "Bash(pip install:*)",
-      "Bash(timeout:*)",
-      "WebSearch",
-      "WebFetch(domain:site.financialmodelingprep.com)",
-      "WebFetch(domain:polygon.io)",
-      "WebFetch(domain:eodhistoricaldata.com)",
-      "WebFetch(domain:eodhd.com)",
-      "WebFetch(domain:simfin.com)",
-      "WebFetch(domain:www.alphavantage.co)",
-      "WebFetch(domain:intrinio.com)",
-      "WebFetch(domain:www.tiingo.com)",
-      "WebFetch(domain:stockanalysis.com)",
-      "WebFetch(domain:www.msci.com)",
-      "Bash(find:*)",
-<<<<<<< HEAD
-      "Bash(powershell -Command:*)",
-      "Bash(where python 2>/dev/null || which python 2>/dev/null; where python3 2>/dev/null || which python3 2>/dev/null)",
-      "Bash(cd /c/Users/danie/Documents/portfolio-xray && py scripts/generate_project_plan.py 2)"
-=======
-      "Bash(powershell -Command:*)"
->>>>>>> 19dde37b83c378e4960c4ec0d65165e18eb451c1
-    ]
+ {                                                                                                                                                                                                    "permissions": {                                                                                                                                                                                     "allow": [                                                                                                                                                                                           "Edit",                                                                                                                                                                                            "Write",                                                                                                                                                                                           "Bash(python -m pip install:*)",                                                                                                                                                                   "Bash(python:*)",                                                                                                                                                                                  "Bash(pip install:*)",                                                                                                                                                                             "Bash(timeout:*)",                                                                                                                                                                                 "WebSearch",                                                                                                                                                                               
+        "WebFetch(domain:site.financialmodelingprep.com)",
+        "WebFetch(domain:polygon.io)",
+        "WebFetch(domain:eodhistoricaldata.com)",
+        "WebFetch(domain:eodhd.com)",
+        "WebFetch(domain:simfin.com)",
+        "WebFetch(domain:www.alphavantage.co)",
+        "WebFetch(domain:intrinio.com)",
+        "WebFetch(domain:www.tiingo.com)",
+        "WebFetch(domain:stockanalysis.com)",
+        "WebFetch(domain:www.msci.com)",
+        "Bash(find:*)",
+        "Bash(powershell -Command:*)",
+        "Bash(py *)",
+        "Bash(tee data/db/estimates_fetch.log)",
+        "Bash(tasklist /FI \"IMAGENAME eq python.exe\" /FO TABLE)",
+        "Bash(tasklist //FI \"IMAGENAME eq python.exe\" //FO TABLE)",
+        "Bash(tasklist //FO CSV)",
+        "Bash(wmic process *)",
+        "Bash(tee data/db/run_model.log)",
+        "Bash(tee data/db/run_model_v2.log)",
+        "Bash(tee data/db/run_model_v3.log)",
+        "Bash(tee data/db/run_model_v4.log)",
+        "Bash(tee data/db/run_model_v5.log)",
+        "Bash(tee data/db/fetch_from_db_v4.log)",
+        "Bash(ls -la data/eda/validation_report*.html data/eda/val_*.csv)",
+        "Bash(ls *)",
+        "Bash(claude update *)",
+        "Bash(git:*)",
+        "Bash(taskkill //PID 10428 //F)"
+      ]
+    }
   }
-}

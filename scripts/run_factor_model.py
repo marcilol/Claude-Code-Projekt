@@ -407,11 +407,21 @@ class BarraModel:
 
 
 def main():
-    # Parse --universe flag
+    # Parse --universe / --frequency flags
     universe = 'russell3000'
+    frequency = 'daily'  # 'daily' or 'monthly' — controls annualization & EWM halflives
     for i, arg in enumerate(sys.argv[1:], 1):
         if arg == '--universe' and i + 1 <= len(sys.argv) - 1:
             universe = sys.argv[i + 1]
+        elif arg == '--frequency' and i + 1 <= len(sys.argv) - 1:
+            frequency = sys.argv[i + 1]
+            if frequency not in ('daily', 'monthly'):
+                raise ValueError(f"--frequency must be 'daily' or 'monthly', got {frequency!r}")
+
+    # Frequency-dependent constants
+    PERIODS_PER_YEAR = {'daily': 252, 'monthly': 12}[frequency]
+    NW_TAO          = {'daily': 252, 'monthly': 24}[frequency]   # 1 yr daily ≈ 2 yr monthly half-life
+    VOL_REGIME_TAO  = {'daily': 42,  'monthly': 6}[frequency]     # ~2 mo half-life either way
 
     print("=" * 70)
     print(f"BARRA MULTI-FACTOR MODEL - {universe}")
@@ -456,13 +466,13 @@ def main():
     factor_ret, r2 = model.run_cross_sectional_regression()
 
     # Step 2: Newey-West adjustment
-    nw_cov = model.run_newey_west(q=2, tao=252)
+    nw_cov = model.run_newey_west(q=2, tao=NW_TAO)
 
     # Step 3: Eigenfactor Risk Adjustment
     eigen_cov = model.run_eigenfactor_adjustment(M=100, scale_coef=1.4)
 
     # Step 4: Volatility Regime Adjustment
-    vol_cov, lambdas = model.run_volatility_regime_adjustment(tao=42)
+    vol_cov, lambdas = model.run_volatility_regime_adjustment(tao=VOL_REGIME_TAO)
 
     # Results summary
     print("\n" + "=" * 70)
@@ -470,10 +480,10 @@ def main():
     print("=" * 70)
 
     # Factor return statistics
-    print("\nFactor Return Statistics (annualized):")
+    print(f"\nFactor Return Statistics (annualized, frequency={frequency}, periods/yr={PERIODS_PER_YEAR}):")
     stats = pd.DataFrame({
-        'Mean (%)': model.factor_ret.mean() * 252 * 100,
-        'Vol (%)': model.factor_ret.std() * np.sqrt(252) * 100,
+        'Mean (%)': model.factor_ret.mean() * PERIODS_PER_YEAR * 100,
+        'Vol (%)': model.factor_ret.std() * np.sqrt(PERIODS_PER_YEAR) * 100,
         't-stat': (model.factor_ret.mean() / model.factor_ret.std()) * np.sqrt(len(model.factor_ret))
     })
     print(stats.round(2).to_string())
@@ -492,8 +502,8 @@ def main():
     style_corr = style_cov / np.outer(style_std, style_std)
     print(style_corr.round(2).to_string())
 
-    print("\nFactor Volatilities (annualized %):")
-    print((np.sqrt(np.diag(style_cov)) * np.sqrt(252) * 100).round(2))
+    print(f"\nFactor Volatilities (annualized %, x sqrt({PERIODS_PER_YEAR})):")
+    print((np.sqrt(np.diag(style_cov)) * np.sqrt(PERIODS_PER_YEAR) * 100).round(2))
 
     # Save results
     print("\n" + "=" * 70)
