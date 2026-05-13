@@ -9,7 +9,8 @@ Factor-based portfolio risk analysis using Barra-style cross-sectional regressio
 3. **Alpha Sizing** — convert expected returns into optimal position sizes with backtesting
 4. **Factor Risk Management** — MCFR analysis, risk limits, and trade suggestions
 5. **Multi-Market Support** — US (Russell 3000 + 20-yr S&P 500), UK (LSE), Korea (KO), Eurozone (XETRA), China (SHE), Taiwan (TW)
-6. **Verification** — 78 automated tests validating math, outputs, and alignment
+6. **Web UI** — FastAPI backend + Vite/React frontend at `localhost:5173` for factor/basket performance, z-score table, rotation quadrant, portfolio analysis
+7. **Verification** — 78 automated tests validating math, outputs, and alignment
 
 ## Data Source
 
@@ -49,6 +50,13 @@ Built by `scripts/build_sp500_historical.py` from the [fja05680/sp500](https://g
 Resolution to EODHD symbols handles three cases: (1) bare current ticker → EODHD active list; (2) `XYZ-YYYYMM` suffixed → tries `XYZ_old`, `XYZ_old1..5`, `XYZ-OLD` first (handles symbol reuse like BSC → BSC_old for Bear Stearns), then bare `XYZ` in delisted (e.g. LEH); (3) manual overrides for fja-vs-EODHD naming mismatches (`LEHMQ-201203 → LEH`, `MTLQQ-201103 → GM_old`, `ABKFQ-201304 → ABK`, `RSHCQ-201510 → RSH`, `RE → EG`, `ATGE → DV`, `FB → META`, `CDAY → DAY`).
 
 Includes 2008-crisis casualties (LEH, BSC_old, GM_old, WB_old1, ABK, AGN_old, XL_old, WCG, RSH) with verified end-of-life dates matching real history. Cache files: `data/db/_sp500_hist_resolved.json` (947 fja→eodhd mappings), `data/db/_sp500_hist_unresolved.json`, `data/db/_eodhd_us_active.json`, `data/db/_eodhd_us_delisted.json`. Source CSVs cached at `data/input/sp500_historical_components.csv` and `data/input/sp500_historical_components_2026.csv`.
+
+**⚠️ Coverage threshold gotcha:** for the full 20-yr range, fetch with `--min-coverage 0.4`, not the default `0.80`. Because sp500_hist is survivorship-bias-free, only ~500 of the 947 historical members are alive in any given year (the rest are at various stages of their delisting timeline), so a 0.8 threshold (≥705 alive on a date) silently truncates the panel to 2006 → 2018-11-05. With 0.4 (≥352 alive) you get the full 2006 → today (~5040 trading days).
+
+```bash
+py scripts/fetch_data.py --from-db --universe sp500_hist --target-days 5040 --min-coverage 0.4
+py scripts/run_factor_model.py --universe sp500_hist
+```
 
 ### Monthly variant (`sp500_hist_monthly`)
 
@@ -121,6 +129,52 @@ pytest tests/ -v                              # 78 automated tests
 ### `update_data.py prices` extra flag
 
 - `--start-date YYYY-MM-DD` — forces full-range fetch from that date for every ticker, ignoring incremental logic. Useful for backfilling history when extending an existing universe (e.g. `sp500_hist` 20-yr backfill).
+
+## Web Frontend
+
+Two-process app: FastAPI backend (`backend/`) serves JSON from the existing CSVs and SQLite DB; Vite + React + TypeScript + Tailwind frontend (`frontend/`) renders charts. Visual style sampled from aibottlenecks.app (warm cream background, dark teal accent).
+
+```bash
+# First-time install
+py -m pip install -r backend/requirements.txt
+cd frontend && npm install
+
+# Run (two terminals)
+py -m uvicorn app:app --reload --app-dir "C:/Users/danie/Documents/portfolio-xray/backend" --port 8000
+cd frontend && npm run dev    # http://localhost:5173
+```
+
+Vite proxies `/api/*` to the backend on :8000.
+
+**Markets page** (default tab):
+1. **Cumulative Factor Returns** — 10 style factors only, 6 timeframes (1D/1W/1M/3M/6M/1Y), toggleable per-factor
+2. **Cumulative Basket Returns** — 50 thematic baskets from `data/input/portfolios/Baskets/cap_weighted/`, multi-select
+3. **Z-Score Table** — factors+baskets unified, sortable, 4 windows (63d/126d/252d/504d), sparklines, ±2σ bolded. Z = (today's daily return − rolling mean) / rolling std over the selected window.
+4. **Rotation Quadrant** — 5D × 21D scatter colored by Leaders / Fading / Recovering / Laggards quadrants, factor/basket toggle
+
+**Portfolio page:**
+- Default loads `data/input/portfolios/own_ibkr_us_mapped.csv` (path configurable in `backend/portfolio.py`)
+- KPI tiles: annualized vol, factor variance %, idio variance %, position count
+- Returns-explained progress bar
+- MCFR by factor table (sorted by abs contribution)
+- Joint Stock × Style Factor MCFR heatmap (green = adds risk, red = hedges)
+- Sector exposure pie (GICS sector from `stocks` table)
+- Skipped-tickers warning for portfolio names not in Russell 3000
+
+**Backend modules:**
+- `app.py` — FastAPI app, 7 endpoints, CORS for :5173, basket warmup on startup
+- `factors.py` — load + cumulate Russell 3000 factor returns
+- `baskets.py` — load all baskets from CSV, compute constant-weight return series via SQL prices
+- `zscores.py` — period returns + z-scores for factors and baskets
+- `portfolio.py` — full risk decomposition (factor variance b'Ωb, idio vol from per-stock residual std, MCFR matrix, sector pie)
+- `db.py` — SQLite helpers for `daily_prices` and `stocks`
+- `theme.py` — variable-name → human-name map (`btop` → `Book-to-Price`, etc.)
+
+**Frontend structure:**
+- `src/api.ts` — typed fetch wrappers for the 7 endpoints
+- `src/theme.ts` — chart color palette (10 colors)
+- `src/components/` — `FactorChart`, `BasketChart`, `ZScoreTable`, `RotationQuadrant`, `PortfolioPage`, `Sparkline`, `TimeframePills`
+- `tailwind.config.ts` — cream/forest/ink color tokens
 
 ## Factor Model
 
